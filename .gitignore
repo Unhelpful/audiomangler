@@ -1,0 +1,17 @@
+# python build directory
+build
+# python dist directory
+dist
+# editor temp files
+*~
+# compiled python
+*.py?
+# there are no hidden files in this project
+.*
+# except for the one
+!.gitignore
+# Python egg stuff
+*.egg*
+# kdevelop stuff
+*.kdevelop
+*.kdevses

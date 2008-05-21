@@ -1,0 +1,77 @@
+###########################################################################
+#    Copyright (C) 2008 by Andrew Mahone                                      
+#    <andrew.mahone@gmail.com>                                                             
+#
+# Copyright: See COPYING file that comes with this distribution
+#
+###########################################################################
+import os.path
+from mutagen import FileType
+from mutagen.asf import ASF
+from mutagen.flac import FLAC
+from mutagen.monkeysaudio import MonkeysAudio
+from mutagen.mp3 import MP3
+from mutagen.mp4 import MP4
+from mutagen.ogg import OggFileType
+from mutagen.oggvorbis import OggVorbis
+from mutagen.wavpack import WavPack
+from mutagen.trueaudio import TrueAudio
+from mutagen.optimfrog import OptimFROG
+from mutagen.musepack import Musepack
+from audiomangler import NormMetaData, from_config, Format, Config
+
+def _get_meta(self):
+    metacache = getattr(self,'_meta_cache',(False,False))
+    if metacache[0] is not getattr(self, 'filename', None) or metacache[1] \
+       is not getattr(self, 'tags', None):
+        self._meta_cache = (getattr(self, 'filename', None),
+           getattr(self, 'tags', None))
+        if getattr(self, 'tags', None) is None:
+            meta = NormMetaData()
+        else:
+            meta = NormMetaData.converted(self)
+        path = getattr(self,'filename',None)
+        if isinstance(path, basestring):
+            (meta['dir'], meta['name']) = os.path.split(path)
+            meta['path'] = path
+        ext = getattr(self, 'ext', None)
+        if ext is not None:
+            meta['ext'] = ext
+        type_ = getattr(self, 'type_', None)
+        if type_ is not None:
+            meta['type'] = type_
+        self._meta = meta
+    return self._meta
+
+def _set_meta(self,value):
+    NormMetaData.converted(value).apply(self)
+
+def format(self, filename=None, base=None, preadd={}, postadd={}):
+    filename, base = from_config('filename', 'base')
+    meta = NormMetaData(preadd)
+    meta.update(self.meta.flat())
+    meta.update(postadd)
+    filename = Format(filename)
+    return os.path.join(base,filename.evaluate(meta).encode(Config['fs_encoding']))
+
+FileType.format = format
+FileType.meta = property(_get_meta,_set_meta)
+
+ASF.ext = 'asf'
+ASF.type_ = 'asf'
+FLAC.ext = 'flac'
+FLAC.type_ = 'flac'
+MonkeysAudio.ext = 'ape'
+MonkeysAudio.type_ = 'monkeys'
+MP3.ext = 'mp3'
+MP3.type_ = 'mp3'
+MP4.ext = 'mp4'
+MP4.type_ = 'mp4'
+OggFileType.ext = 'ogg'
+OggVorbis.type_ = 'oggvorbis'
+WavPack.ext = 'wv'
+WavPack.type_ = 'wavpack'
+TrueAudio.ext = 'tta'
+OptimFROG.ext = 'ofr'
+Musepack.ext = 'mpc'
+Musepack.type_ = 'musepack'
