@@ -7,6 +7,11 @@
 ###########################################################################
 import os, os.path
 import sys
+import Image
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
 from tempfile import mkdtemp
 from threading import BoundedSemaphore, RLock
 from mutagen import FileType
@@ -141,6 +146,62 @@ def transcode_track(dtask, etask, sem):
     if sem:
         sem.release()
 
+def check_and_copy_cover(fileset,targetfiles):
+    cover_sizes = Config['cover_sizes']
+    if not cover_sizes:
+        return
+    cover_out_filename = Config['cover_out_filename']
+    if not cover_out_filename:
+        return
+    cover_out_filename = Expr(cover_out_filename)
+    cover_sizes = cover_sizes.split(',')
+    covers_loaded = {}
+    covers_written = {}
+    outdirs = set()
+    cover_filenames = Config['cover_filenames']
+    if cover_filenames:
+        cover_filenames = cover_filenames.split(',')
+    else:
+        cover_filenames = ()
+    for (infile,targetfile) in zip(fileset,targetfiles):
+        if infile.meta['dir'] in outdirs: continue
+        i = None
+        for filename in (os.path.join(infile.meta['dir'],f) for f in cover_filenames):
+            try:
+                d = open(filename).read()
+                i = Image.open(StringIO(d))
+                i.load()
+            except Exception:
+                continue
+        if not i:
+            tags = [(value.type,value) for key,value in infile.tags.items() if key.startswith('APIC') and \
+            hasattr(value,'type') and value.type in (0,3)]
+            tags.sort(None,None,True)
+            for t,value in tags:
+                print t
+                i = None
+                try:
+                    d = value.data
+                    i = Image.open(StringIO(d))
+                    i.load()
+                    break
+                except Exception:
+                    continue
+        if not i: continue
+        for s in cover_sizes:
+            try:
+                s = int(s)
+            except Exception:
+                continue
+            w, h = i.size
+            sc = 1.0*s/max(w,h)
+            w = int(w*sc+0.5)
+            h = int(h*sc+0.5)
+            iw = i.resize((w,h),Image.ADAPTIVE)
+            filename = os.path.join(os.path.split(targetfile)[0],cover_out_filename.evaluate({'size':s}).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
+            iw.save(filename)
+        outdirs.add(infile.meta['dir'])
+            
 def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l):
     try:
         if not fileset:
@@ -182,6 +243,7 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                     os.makedirs(targetdir)
             print "%s -> %s" %(i.filename,t)
             util.move(o.filename,t)
+        check_and_copy_cover(fileset,targetfiles)
     finally:
         if workdirs_l:
             workdirs_l.acquire()
@@ -204,7 +266,8 @@ def sync_sets(sets=[]):
     else:
         allowedcodecs = set((targetcodec,))
     targetcodec = get_codec(targetcodec)
-    workdir = mkdtemp(dir=Config['base'],prefix='audiomangler_work_')
+    workdir = Config['workdir'] or Config['base']
+    workdir = mkdtemp(dir=workdir,prefix='audiomangler_work_')
     if hasattr(targetcodec,'_from_wav_pipe_cmd'):
         if len(sets) > semct * 2:
             alsem = BoundedSemaphore(semct)
@@ -229,21 +292,26 @@ def sync_sets(sets=[]):
         workdirs.add((w,pipes))
     for fileset in sets:
         targetfiles = [f.format(postadd={'type':targetcodec.type_,'ext':targetcodec.ext}) for f in fileset]
-        if reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True) or \
-           reduce(lambda x,y: x and os.path.isfile(y.format()) and y.type_ in allowedcodecs, fileset, True):
+        if reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True):
+            check_and_copy_cover(fileset,targetfiles)
             continue
         if reduce(lambda x,y: x and y.type_ in allowedcodecs, fileset, True):
-            dirs = set()
-            for i in fileset:
-                t = i.format()
-                targetdir = os.path.split(t)[0]
-                if targetdir not in dirs:
-                    dirs.add(targetdir)
-                    if not os.path.isdir(targetdir):
-                        os.makedirs(targetdir)
-                print "%s -> %s" % (i.filename,t)
-                util.copy(i.filename,t)
+            targetfiles = [f.format() for f in fileset]
+            if not reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True):
+                dirs = set()
+                for i in fileset:
+                    t = i.format()
+                    targetdir = os.path.split(t)[0]
+                    if targetdir not in dirs:
+                        dirs.add(targetdir)
+                        if not os.path.isdir(targetdir):
+                            os.makedirs(targetdir)
+                    print "%s -> %s" % (i.filename,t)
+                    util.copy(i.filename,t)
+            check_and_copy_cover(fileset,targetfiles)
             continue
+        print "transcode %s" % fileset[0].meta.evaluate(Expr("artist + ' - ' + album"))
+        continue
         if alsem:
             alsem.acquire()
             for task in list(bgtasks):
