@@ -204,7 +204,7 @@ def sync_sets(sets=[]):
     else:
         allowedcodecs = set((targetcodec,))
     targetcodec = get_codec(targetcodec)
-    workdir = mkdtemp(dir='/mnt/share',prefix='audiomangler_work_')
+    workdir = mkdtemp(dir=Config['base'],prefix='audiomangler_work_')
     if hasattr(targetcodec,'_from_wav_pipe_cmd'):
         if len(sets) > semct * 2:
             alsem = BoundedSemaphore(semct)
