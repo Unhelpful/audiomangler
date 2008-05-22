@@ -60,8 +60,7 @@ def rename(args = None):
         moves = []
         for file_ in files:
             src = file_.filename
-            dst = file_.format().encode(
-               Config.get('DEFAULT','fs_encoding'))
+            dst = file_.format()
             if src == dst:
                 print "  skipping %s, already named correctly" % src
                 continue
@@ -94,15 +93,15 @@ def rename(args = None):
                 else:
                     break
 
-transcode_opts = common_opts + (
+sync_opts = common_opts + (
    ('t:','type=','type','type of audio to encode to'),
    ('s:','preset=','preset','codec preset to use'),
    ('e:','encopts=','encopts','encoder options to use'),
    ('j:','jobs=','jobs','number of jobs to run'),
 )
-def transcode(args = None):
-    args = parse_options(args, transcode_opts)
+def sync(args = None):
+    args = parse_options(args, sync_opts)
     (album_list, dir_list) = scan(args)
-    transcode_sets(album_list.values())
+    sync_sets(album_list.values())
 
 __all__ = ['rename']

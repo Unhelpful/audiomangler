@@ -30,11 +30,6 @@ def copy(src,dst):
             os.utime(dst, (st.st_atime, st.st_mtime))
         except OSError:
             pass
-    if hasattr(os, 'chmod'):
-        try:
-            os.chmod(dst, mode)
-        except OSError:
-            pass
 
 def move(src,dst):
     try:

@@ -6,6 +6,7 @@
 #
 ###########################################################################
 from pyparsing import *
+from audiomangler import Config
 import re
 ParserElement.enablePackrat()
 
@@ -189,9 +190,9 @@ class Format(Value):
         for item in self.parsedformat:
             if isinstance(item,Value):
                 if isinstance(item,AsIs):
-                    item = re.sub(r'[]?[\\=+<>:;",*|]','_',item.evaluate(cdict))
+                    item = re.sub(r'[]?[\\=+<>:;",*|]','_',item.evaluate(cdict).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
                 else:
-                    item = re.sub(r'[]?[/\\=+<>:;",*|]','_',item.evaluate(cdict))
+                    item = re.sub(r'[]?[/\\=+<>:;",*|]','_',item.evaluate(cdict).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
             reslist.append(item)
         return ''.join(reslist)
 

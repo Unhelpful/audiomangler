@@ -45,10 +45,10 @@ class AMConfig(RawConfigParser):
             self._cache[key] = self._current_values[key]
             return self._current_values[key]
         trysources = {
-           'preset':('type','profile','DEFAULT'),
+           'preset':('profile','type','DEFAULT'),
            'type':('profile','DEFAULT'),
            'profile':('DEFAULT',)
-        }.get(key, ('preset','type','profile','DEFAULT'))
+        }.get(key, ('profile','type','preset','DEFAULT'))
         for source in trysources:
             if source == 'preset':
                 source = [self['type']]
@@ -87,12 +87,13 @@ Config = AMConfig(
          ('sortby', "(discnumber,tracknumber,filename)"),
          ('base', '.'),
          ('filename',
-            "$/(ext and '%s/'%ext)$firstof(releasetype == 'soundtrack' and "
+            "$/(type and '%s/'%type)$firstof(releasetype == 'soundtrack' and "
             "'Soundtrack',albumartist,artist)/$(album)/"
             "$if(discnumber > 0,'%02d.' % discnumber)$('%02d' % tracknumber)"
             " $title$if(ext,'.%s'%ext)"
          ),
-         ('fs_encoding', 'utf8')
+         ('fs_encoding', 'utf8'),
+         ('fs_encoding_error', 'replace'),
       ),
       ('mp3',
          ('preset', 'standard')

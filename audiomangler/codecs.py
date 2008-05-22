@@ -180,7 +180,7 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                 dirs.add(targetdir)
                 if not os.path.isdir(targetdir):
                     os.makedirs(targetdir)
-            print "%s -> %s" %(i.filename.decode(Config['fs_encoding']),t.decode(Config['fs_encoding']))
+            print "%s -> %s" %(i.filename,t)
             util.move(o.filename,t)
     finally:
         if workdirs_l:
@@ -190,13 +190,20 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
         if alsem:
             alsem.release()
 
-def transcode_sets(sets=[]):
+def sync_sets(sets=[]):
     try:
         semct = int(Config['jobs'])
     except (ValueError,TypeError):
         semct = 1
     bgtasks = set()
-    targetcodec = get_codec(Config['type'])
+    targetcodec = Config['type']
+    if ',' in targetcodec:
+        allowedcodecs = targetcodec.split(',')
+        targetcodec = allowedcodecs[0]
+        allowedcodecs = set(allowedcodecs)
+    else:
+        allowedcodecs = set((targetcodec,))
+    targetcodec = get_codec(targetcodec)
     workdir = mkdtemp(dir='/mnt/share',prefix='audiomangler_work_')
     if hasattr(targetcodec,'_from_wav_pipe_cmd'):
         if len(sets) > semct * 2:
@@ -222,7 +229,19 @@ def transcode_sets(sets=[]):
         workdirs.add((w,pipes))
     for fileset in sets:
         targetfiles = [f.format(postadd={'type':targetcodec.type_,'ext':targetcodec.ext}) for f in fileset]
-        if reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True):
+        if reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True) or \
+           reduce(lambda x,y: x and os.path.isfile(y.format()) and y.type_ in allowedcodecs, fileset, True):
+            continue
+        if reduce(lambda x,y: x and y.type_ in allowedcodecs, fileset, True):
+            dirs = set()
+            for i,t in zip(fileset,targetfiles):
+                targetdir = os.path.split(t)[0]
+                if targetdir not in dirs:
+                    dirs.add(targetdir)
+                    if not os.path.isdir(targetdir):
+                        os.makedirs(targetdir)
+                print "%s -> %s" % (i.filename,t)
+                util.copy(i.filename,t)
             continue
         if alsem:
             alsem.acquire()

@@ -52,7 +52,7 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
     meta.update(self.meta.flat())
     meta.update(postadd)
     filename = Format(filename)
-    return os.path.join(base,filename.evaluate(meta).encode(Config['fs_encoding']))
+    return os.path.join(base,filename.evaluate(meta))
 
 FileType.format = format
 FileType.meta = property(_get_meta,_set_meta)

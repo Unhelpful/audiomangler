@@ -34,14 +34,12 @@ class Clear(object):
         return cls
 
 class BaseTask(object):
-    def __init__(self, target=None, args=(), sem=None, kwargs=(), background=True):
+    def __init__(self, target=None, args=(), kwargs=(), background=True):
         self.started = False
         self.target = target
         self.args=list(args)
-        self.sem = sem
         self.kwargs = dict(kwargs)
         self.background = background
-        self._lock = RLock()
 
     def run(self):
         self.started = True
@@ -52,33 +50,48 @@ class BaseTask(object):
             self.runfg()
 
 class FuncTask(BaseTask):
+    def __init__(self, target=None, args=(), kwargs=(), background=True):
+        self._lock = RLock()
+        BaseTask.__init__(self, target, args, kwargs, background)
+
     run = synchronized('_lock')(BaseTask.run)
 
     def runfg(self):
-        if self.sem:
-            self.sem.acquire()
-        try:
-            self.target(*self.args, **self.kwargs)
-        finally:
-            if self.sem:
-                self.sem.release()
+        self.target(*self.args, **self.kwargs)
 
+    @synchronized('_lock')
     def runbg(self):
-        self.thread = Thread(target=self.runfg)
+        self.thread = Thread(target=self.runsaveexc)
         self.thread.start()
+
+    def runsaveexc(self):
+        try:
+            self.runfg()
+        except Exception, e:
+            self.exc = e
 
     @synchronized('_lock')
     def wait(self):
         if not self.started:
             return False
-        if not hasattr(self,'thread'):
+        elif not hasattr(self,'thread'):
             return False
         self.thread.join()
+        if hasattr(self, 'exc'):
+            raise exc
         return True
 
     @synchronized('_lock')
     def poll(self):
-        return not self.thread.isAlive()
+        if not self.started:
+            return False
+        elif not hasattr(self,'thread'):
+            return False
+        elif self.thread.isAlive():
+            return False
+        elif hasattr(self, 'exc'):
+            raise self.exc
+        return True
 
 class CLITask(BaseTask):
     def __init__(self, target=None, args=(), stdin=None, stdout=None, stderr=None, kwargs=(), background=True):
@@ -131,8 +144,8 @@ class CLITask(BaseTask):
             raise CalledProcessError(ret)
 
 class TaskSet(FuncTask):
-    def __init__(self, tasks=(), sem=None, background=True):
-        FuncTask.__init__(self, sem=sem, background=background)
+    def __init__(self, tasks=(), background=True):
+        FuncTask.__init__(self, background=background)
         self.tasks = list(tasks)
 
     def clear(self):
@@ -141,20 +154,14 @@ class TaskSet(FuncTask):
             t.wait()
 
     def runfg(self):
-        if self.sem:
-            self.sem.acquire()
-        try:
-            self.bgprocs = set()
-            for t in self.tasks:
+        self.bgprocs = set()
+        for t in self.tasks:
+            if isinstance(t, BaseTask):
+                t = t.run()
                 if isinstance(t, BaseTask):
-                    t = t.run()
-                    if isinstance(t, BaseTask):
-                        self.bgprocs.add(t)
-                elif t is Clear:
-                    self.clear()
-            self.clear()
-        finally:
-            if self.sem:
-                self.sem.release()
+                    self.bgprocs.add(t)
+            elif t is Clear:
+                self.clear()
+        self.clear()
 
 __all__ = ['FuncTask','CLITask','TaskSet']

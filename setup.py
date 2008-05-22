@@ -18,7 +18,8 @@ setup(
     entry_points={
         'console_scripts': [
             'am_rename = audiomangler.cli:rename',
-            'am_transcode = audiomangler.cli:transcode',
+            'am_sync = audiomangler.cli:sync',
+            'am_transcode = audiomangler.cli:sync',
         ]
     },
 )
