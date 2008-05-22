@@ -234,7 +234,8 @@ def sync_sets(sets=[]):
             continue
         if reduce(lambda x,y: x and y.type_ in allowedcodecs, fileset, True):
             dirs = set()
-            for i,t in zip(fileset,targetfiles):
+            for i in fileset:
+                t = i.format()
                 targetdir = os.path.split(t)[0]
                 if targetdir not in dirs:
                     dirs.add(targetdir)
@@ -266,4 +267,4 @@ def get_codec(item):
         item = getattr(item,'type_')
     return codec_map[item]
 
-__all__ = ['transcode_sets']
+__all__ = ['sync_sets']

@@ -11,7 +11,7 @@ import shutil
 import os
 import os.path
 import errno
-from audiomangler import scan, Config, util, transcode_sets
+from audiomangler import scan, Config, util, sync_sets
 
 def parse_options(args = None, options = []):
     if args is None and len(sys.argv) == 1:
