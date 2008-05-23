@@ -103,7 +103,7 @@ class Codec(object):
         return CLITask(args=args,stdin='/dev/null',stdout=stdout,stderr=sys.stderr,background=False)
 
     @classmethod
-    def add_replaygain(files):
+    def add_replaygain(cls,files):
         env = {
            'replaygain':cls.replaygain,
            'files':tuple(files)
@@ -241,6 +241,8 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                 task.run()
             etask.wait()
         dirs = set()
+        if hasattr(targetcodec,'_replaygain_cmd'):
+            targetcodec.add_replaygain(outfiles).run()
         for i,o,t in zip(fileset,outfiles,targetfiles):
             o = File(o)
             o.meta = i.meta
@@ -252,8 +254,6 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                     os.makedirs(targetdir)
             print "%s -> %s" %(i.filename,t)
             util.move(o.filename,t)
-        if hasattr(targetcodec,'_replaygain_cmd'):
-            targetcodec.add_replaygain(outfiles).run()
         check_and_copy_cover(fileset,targetfiles)
     finally:
         if workdirs_l:
