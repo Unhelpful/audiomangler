@@ -102,6 +102,15 @@ class Codec(object):
             stdout = cls._to_wav_pipe_stdout.evaluate(env)
         return CLITask(args=args,stdin='/dev/null',stdout=stdout,stderr=sys.stderr,background=False)
 
+    @classmethod
+    def add_replaygain(files):
+        env = {
+           'replaygain':cls.replaygain,
+           'files':tuple(files)
+        }
+        args = cls._replaygain_cmd.evaluate(env)
+        return CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr=sys.stderr,background=False)
+
 class MP3Codec(Codec):
     ext = 'mp3'
     type_ = 'mp3'
@@ -138,6 +147,7 @@ class OggVorbisCodec(Codec):
     _to_wav_pipe_cmd = Expr("(decoder,'-Q','-o','-',infile)")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-Q')+encopts+('-o',outfile,infile)")
+    _replaygain_cmd = Expr("(replaygain,'-q','-a')+files)")
 
 def transcode_track(dtask, etask, sem):
     etask.run()
@@ -178,7 +188,6 @@ def check_and_copy_cover(fileset,targetfiles):
             hasattr(value,'type') and value.type in (0,3)]
             tags.sort(None,None,True)
             for t,value in tags:
-                print t
                 i = None
                 try:
                     d = value.data
@@ -201,7 +210,7 @@ def check_and_copy_cover(fileset,targetfiles):
             filename = os.path.join(os.path.split(targetfile)[0],cover_out_filename.evaluate({'size':s}).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
             iw.save(filename)
         outdirs.add(infile.meta['dir'])
-            
+
 def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l):
     try:
         if not fileset:
@@ -243,6 +252,8 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                     os.makedirs(targetdir)
             print "%s -> %s" %(i.filename,t)
             util.move(o.filename,t)
+        if hasattr(targetcodec,'_replaygain_cmd'):
+            targetcodec.add_replaygain(outfiles).run()
         check_and_copy_cover(fileset,targetfiles)
     finally:
         if workdirs_l:
@@ -310,8 +321,6 @@ def sync_sets(sets=[]):
                     util.copy(i.filename,t)
             check_and_copy_cover(fileset,targetfiles)
             continue
-        print "transcode %s" % fileset[0].meta.evaluate(Expr("artist + ' - ' + album"))
-        continue
         if alsem:
             alsem.acquire()
             for task in list(bgtasks):
