@@ -48,7 +48,7 @@ def _get_meta(self):
     return self._meta
 
 def _set_meta(self,value):
-    NormMetaData.converted(value).apply(self)
+    NormMetaData.converted(value).apply(self,True)
 
 def format(self, filename=None, base=None, preadd={}, postadd={}):
     filename, base = from_config('filename', 'base')
@@ -60,13 +60,16 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
 
 FileType.format = format
 FileType.meta = property(_get_meta,_set_meta)
+FileType.lossless = False
 
 ASF.ext = 'asf'
 ASF.type_ = 'asf'
 FLAC.ext = 'flac'
 FLAC.type_ = 'flac'
+FLAC.lossless = True
 MonkeysAudio.ext = 'ape'
 MonkeysAudio.type_ = 'monkeys'
+MonkeysAudio.lossless = True
 MP3.ext = 'mp3'
 MP3.type_ = 'mp3'
 MP4.ext = 'mp4'
@@ -75,7 +78,10 @@ OggFileType.ext = 'ogg'
 OggVorbis.type_ = 'oggvorbis'
 WavPack.ext = 'wv'
 WavPack.type_ = 'wavpack'
+WavPack.lossless = True
 TrueAudio.ext = 'tta'
+TrueAudio.lossless = True
 OptimFROG.ext = 'ofr'
+OptimFROG.lossless = True
 Musepack.ext = 'mpc'
 Musepack.type_ = 'musepack'

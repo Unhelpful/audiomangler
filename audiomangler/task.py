@@ -78,7 +78,7 @@ class FuncTask(BaseTask):
             return False
         self.thread.join()
         if hasattr(self, 'exc'):
-            raise exc
+            raise self.exc
         return True
 
     @synchronized('_lock')

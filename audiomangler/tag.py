@@ -93,6 +93,37 @@ def id3tiplout(i, o, k, v):
     t = o.setdefault('TIPL',[])
     t.extend(zip([k]*len(v),v))
 
+def id3rva2in(i, o, k, v):
+    if v.channel != 1:
+        return
+    if not v.desc:
+        if 'replaygain_track_gain' in self:
+            return
+        else:
+            target = 'track'
+    elif v.desc.lower() == 'track':
+        target = 'track'
+    elif v.desc.lower() == 'album':
+        target = 'album'
+    o['_'.join(('replaygain',target,'gain'))] = "%.3f dB" % v.gain
+    o['_'.join(('replaygain',target,'peak'))] = "%.8f" % v.peak
+
+def id3rva2out(i, o, k, v):
+    if 'track' in k:
+        target = 'track'
+    elif 'album' in k:
+        target = 'album'
+    try:
+        gain = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain',target,'gain')),'0.0')).group(0))
+    except Exception:
+        gain = 0.0
+    try:
+        peak = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain',target,'peak')),'0.0')).group(0))
+        peak = abs(peak)
+    except Exception:
+        peak = 0.0
+    o[':'.join(('RVA2',target))] = id3.RVA2(desc=target,peak=peak,gain=gain,channel=1)
+
 id3_encodings=(
     'iso-8859-1',
     'utf-16',
@@ -111,8 +142,10 @@ def best_encoding(txt):
     return r[0][1]
 
 def id3itemout(k,v):
+    if isinstance(v, id3.Frame):
+        return k,v
     fid = k[:4]
-    if fid[0] == 'T':
+    if fid.startswith('T'):
         if isinstance(v,basestring):
             v = [v]
         if fid == 'TIPL':
@@ -132,9 +165,6 @@ def id3itemout(k,v):
         if isinstance(v, (list,tuple)):
             v = v[0]
         return k,id3.UFID(owner='http://musicbrainz.org',data=v)
-        
-        
-
 tagmap = {
     APEv2:{
         'keysasis':(
@@ -176,6 +206,10 @@ tagmap = {
             'musicbrainz_trmid',
             'musicbrainz_discid',
             'musicip_puid',
+            'replaygain_album_gain',
+            'replaygain_album_peak',
+            'replaygain_track_gain',
+            'replaygain_track_peak',
             'releasecountry',
             'asin',
         ),
@@ -277,6 +311,10 @@ tagmap = {
             'musicbrainz_trmid',
             'musicbrainz_discid',
             'musicip_puid',
+            'replaygain_album_gain',
+            'replaygain_album_peak',
+            'replaygain_track_gain',
+            'replaygain_track_peak',
             'releasecountry',
             'asin',
         ),
@@ -302,7 +340,7 @@ tagmap = {
     },
     ID3:{
         'in':{
-            'keytrans': lambda k: k.split('::')[0],
+            'keytrans': lambda k: (k.startswith('TXXX') or k.startswith('UFID')) and k or k.split(':',1)[0],
             'valuetrans': lambda v: [unicode(i) for i in v.text],
             'keymap': {
                 'TALB':'album',
@@ -346,7 +384,8 @@ tagmap = {
                 'TXXX:MusicBrainz Album Status':'releasestatus',
                 'TXXX:MusicBrainz Album Type':'releasetype',
                 'TXXX:MusicBrainz Album Release Country':'releasecountry',
-                'TXXX:ASIN':'asin'
+                'TXXX:ASIN':'asin',
+                'RVA2': id3rva2in
             },
         },
         'out':{
@@ -397,6 +436,8 @@ tagmap = {
                 'releasestatus':'TXXX:MusicBrainz Album Status',
                 'releasetype':'TXXX:MusicBrainz Album Type',
                 'releasecountry':'TXXX:MusicBrainz Album Release Country',
+                'replaygain_track_gain':id3rva2out,
+                'replaygain_album_gain':id3rva2out,
                 'asin':'TXXX:ASIN',
             }
         }
@@ -409,7 +450,10 @@ for value in tagmap.values():
         value['keysasis'] = frozenset(value['keysasis'])
 
 class NormMetaData(dict):
-    
+
+    def copy(self):
+        return self.__class__(self)
+
     @classmethod
     def tagmapfor(cls, meta):
         global tagmap

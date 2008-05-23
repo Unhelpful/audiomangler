@@ -7,6 +7,7 @@
 ###########################################################################
 import os, os.path
 import sys
+import re
 import Image
 try:
     from cStringIO import StringIO
@@ -14,6 +15,7 @@ except ImportError:
     from StringIO import StringIO
 from tempfile import mkdtemp
 from threading import BoundedSemaphore, RLock
+from subprocess import Popen, PIPE
 from mutagen import FileType
 from audiomangler import Config, from_config, FuncTask, CLITask, TaskSet, Expr, File, util
 
@@ -33,6 +35,11 @@ codec_map = {}
 class Codec(object):
     __metaclass__ = CodecMeta
 
+    _from_wav_multi = False
+    _from_wav_pipe = False
+    _to_wav_pipe = False
+    _replaygain = False
+    lossless = False
     def __classinit__(cls, name, bases, cls_dict):
         if 'type_' in cls_dict:
             codec_map[cls_dict['type_']] = cls
@@ -103,20 +110,48 @@ class Codec(object):
         return CLITask(args=args,stdin='/dev/null',stdout=stdout,stderr=sys.stderr,background=False)
 
     @classmethod
-    def add_replaygain(cls,files):
-        env = {
-           'replaygain':cls.replaygain,
-           'files':tuple(files)
-        }
-        args = cls._replaygain_cmd.evaluate(env)
-        return CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr=sys.stderr,background=False)
+    def add_replaygain(cls,files,metas=None):
+        if metas and hasattr(cls, 'calc_replaygain'):
+            tracks, album = cls.calc_replaygain(files)
+            if tracks:
+                for meta,track in zip(metas,tracks):
+                    meta.update(track)
+                    meta.update(album)
+            return metas
+        elif hasattr(cls,'_replaygain_cmd'):
+            env = {
+            'replaygain':cls.replaygain,
+            'files':tuple(files)
+            }
+            args = cls._replaygain_cmd.evaluate(env)
+            CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr=sys.stderr,background=False).run()
+
 
 class MP3Codec(Codec):
     ext = 'mp3'
     type_ = 'mp3'
     encoder = 'lame'
     replaygain = 'mp3gain'
+    _from_wav_multi = True
+    _replaygain = True
     _from_wav_multi_cmd = Expr("(encoder,'--quiet')+encopts+('--noreplaygain','--nogapout',indir,'--nogaptags','--nogap')+infiles")
+
+    @classmethod
+    def calc_replaygain(cls,files):
+        tracks = []
+        args = [cls.replaygain,'-qo','-s','s']
+        args.extend(files)
+        p = Popen(args=args, stdout=PIPE, stderr=PIPE)
+        (out, err) = p.communicate()
+        out = [l.split('\t')[2:4] for l in out.splitlines()[1:]]
+        for i in out[:-1]:
+            gain = ' '.join((i[0],'dB'))
+            peak = '%.8f'% (float(i[1]) / 32768)
+            tracks.append((('replaygain_track_gain',gain),('replaygain_track_peak',peak)))
+        gain = ' '.join((out[-1][0],'dB'))
+        peak = '%.8f'% (float(out[-1][1]) / 32768)
+        album = (('replaygain_album_gain',gain),('replaygain_album_peak',peak))
+        return tracks,album
 
 class WavPackCodec(Codec):
     ext = 'wv'
@@ -124,6 +159,9 @@ class WavPackCodec(Codec):
     encoder = 'wavpack'
     decoder = 'wvunpack'
     replaygain = 'wvgain'
+    _to_wav_pipe = True
+    _from_wav_pipe = True
+    lossless = True
     _to_wav_pipe_cmd = Expr("(decoder,'-q','-w',infile,'-o','-')")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-q')+encopts+(infile,'-o',outfile)")
@@ -134,6 +172,9 @@ class FLACCodec(Codec):
     encoder = 'flac'
     decoder = 'flac'
     replaygain = 'metaflac'
+    _to_wav_pipe = True
+    _from_wav_pipe = True
+    lossless = True
     _to_wav_pipe_cmd = Expr("(decoder,'-s','-c','-d',infile)")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-s')+encopts+(infile,)")
@@ -144,10 +185,34 @@ class OggVorbisCodec(Codec):
     encoder = 'oggenc'
     decoder = 'oggdec'
     replaygain = 'vorbisgain'
+    _to_wav_pipe = True
+    _from_wav_pipe = True
+    _replaygain = True
     _to_wav_pipe_cmd = Expr("(decoder,'-Q','-o','-',infile)")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-Q')+encopts+('-o',outfile,infile)")
     _replaygain_cmd = Expr("(replaygain,'-q','-a')+files)")
+
+    @classmethod
+    def calc_replaygain(cls,files):
+        tracks = []
+        args = [cls.replaygain,'-and']
+        args.extend(files)
+        p = Popen(args=args, stdout=PIPE, stderr=PIPE)
+        (out, err) = p.communicate()
+        apeak = 0.0
+        for match in re.finditer('^\s*(\S+ dB)\s*\|\s*([0-9]+)\s*\|',out,re.M):
+            gain = match.group(1)
+            peak = float(match.group(2)) / 32768
+            apeak = max(apeak,peak)
+            peak = "%.8f" % peak
+            tracks.append((('replaygain_track_gain',gain),('replaygain_track_peak',peak)))
+        again = re.search('^Recommended Album Gain:\s*(\S+ dB)',err,re.M)
+        if again:
+            album = (('replaygain_album_gain',again.group(1)),('replaygain_album_peak',"%.8f" % apeak))
+        else:
+            album = (('replaygain_album_peak',apeak),)
+        return tracks, album
 
 def transcode_track(dtask, etask, sem):
     etask.run()
@@ -211,6 +276,7 @@ def check_and_copy_cover(fileset,targetfiles):
             iw.save(filename)
         outdirs.add(infile.meta['dir'])
 
+rg_keys = ('replaygain_track_gain','replaygain_track_peak','replaygain_album_gain','replaygain_album_peak')
 def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l):
     try:
         if not fileset:
@@ -220,7 +286,7 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
         workdir, pipefiles = workdirs.pop()
         workdirs_l.release()
         outfiles = map(targetcodec._conv_out_filename,pipefiles[:len(fileset)])
-        if hasattr(targetcodec,'_from_wav_pipe_cmd'):
+        if targetcodec._from_wav_pipe:
             for i,p,o in zip(fileset,pipefiles,outfiles):
                 bgprocs = set()
                 dtask = get_codec(i).to_wav_pipe(i.meta['path'],p)
@@ -233,19 +299,34 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                     ttask.runfg()
             for task in bgprocs:
                 task.wait()
-        elif hasattr(targetcodec,'_from_wav_multi_cmd'):
-            etask = targetcodec.from_wav_multi(workdir,pipefiles[:len(fileset),outfiles])
+        elif targetcodec._from_wav_multi:
+            etask = targetcodec.from_wav_multi(workdir,pipefiles[:len(fileset)],outfiles)
             etask.run()
             for i,o in zip(fileset,pipefiles):
-                task = get_codec(i).to_wav_pipe(i.meta['path'])
+                task = get_codec(i).to_wav_pipe(i.meta['path'],o)
                 task.run()
             etask.wait()
         dirs = set()
-        if hasattr(targetcodec,'_replaygain_cmd'):
-            targetcodec.add_replaygain(outfiles).run()
-        for i,o,t in zip(fileset,outfiles,targetfiles):
+        metas = []
+        newreplaygain = False
+        for i,o in zip(fileset,outfiles):
+            meta = i.meta.copy()
+            if not (i.lossless and targetcodec.lossless):
+                for key in rg_keys:
+                    if key in meta:
+                        del meta[key]
+                newreplaygain = True
+            if not newreplaygain:
+                for key in rg_keys:
+                    if key not in meta:
+                        newreplaygain=True
+                        break
+            metas.append(meta)
+        if newreplaygain and targetcodec._replaygain:
+            targetcodec.add_replaygain(outfiles,metas)
+        for m,o,t in zip(metas,outfiles,targetfiles):
             o = File(o)
-            o.meta = i.meta
+            m.apply(o)
             o.save()
             targetdir = os.path.split(t)[0]
             if targetdir not in dirs:
@@ -279,14 +360,14 @@ def sync_sets(sets=[]):
     targetcodec = get_codec(targetcodec)
     workdir = Config['workdir'] or Config['base']
     workdir = mkdtemp(dir=workdir,prefix='audiomangler_work_')
-    if hasattr(targetcodec,'_from_wav_pipe_cmd'):
+    if targetcodec._from_wav_pipe:
         if len(sets) > semct * 2:
             alsem = BoundedSemaphore(semct)
             trsem = None
         else:
             trsem = BoundedSemaphore(semct)
             alsem = None
-    elif hasattr(targetcodec,'_from_wav_multi_cmd'):
+    elif targetcodec._from_wav_multi:
         trsem = None
         alsem = BoundedSemaphore(semct)
     numpipes = max(len(s) for s in sets)
