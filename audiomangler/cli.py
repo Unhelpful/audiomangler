@@ -15,7 +15,7 @@ from audiomangler import scan, Config, util, sync_sets
 
 def parse_options(args = None, options = []):
     if args is None and len(sys.argv) == 1:
-        print_usage(transcode_opts)
+        print_usage(options)
         sys.exit(0)
     if args == None:
         args = sys.argv[1:]
@@ -30,7 +30,11 @@ def parse_options(args = None, options = []):
             name_map['--'+l_opt.rstrip('=')] = name
             l_opts.append(l_opt)
     s_opts = ''.join(s_opts)
-    (opts, args) = getopt.getopt(args,s_opts,l_opts)
+    try:
+        (opts, args) = getopt.getopt(args,s_opts,l_opts)
+    except getopt.GetoptError:
+        print_usage(options)
+        sys.exit(0)
     for k,v in opts:
         k = name_map[k]
         Config[k] = v
