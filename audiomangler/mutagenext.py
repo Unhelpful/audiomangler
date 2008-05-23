@@ -34,6 +34,10 @@ def _get_meta(self):
         if isinstance(path, basestring):
             (meta['dir'], meta['name']) = os.path.split(path)
             meta['path'] = path
+            meta['basename'] = os.path.splitext(meta['name'])[0]
+        relpath = getattr(self,'relpath',None)
+        if isinstance(relpath,basestring):
+            meta['relpath'] = relpath
         ext = getattr(self, 'ext', None)
         if ext is not None:
             meta['ext'] = ext

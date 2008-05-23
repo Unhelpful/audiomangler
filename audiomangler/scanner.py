@@ -36,11 +36,13 @@ def scan(items, groupby = None, sortby = None):
                 for filename in filenames:
                     if filename in scanned:
                         continue
+                    t = None
                     try:
                         t = File(filename)
                     except Exception:
                         continue
                     if t is not None:
+                        t.relpath = t.filename.replace(item,'',1).lstrip('/')
                         t.sortkey = t.meta.evaluate(sortby)
                         tracks.append(t)
                         scanned.add(item)
