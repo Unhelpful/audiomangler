@@ -79,10 +79,13 @@ Config = AMConfig(
       ('DEFAULT',
          ('groupby',
             "musicbrainz_albumid and ('album',musicbrainz_albumid) or "
-            "musicbrainz_discid and ('disc',musicbrainz_discid) or "
             "album and (albumartist or artist) and "
             "('meta',albumartist or artist,album,catalognumber or asin or isrc)"
             " or ('dir',dir)"
+         ),
+         ('trackid',
+            "musicbrainz_albumid and musicip_trackid and ('mbid',musicip_puid,musicbrainz_albumid,tracknumber) or "
+            "('meta',title,artist,album,year,catalognumber or asin or isrc,tracknumber)"
          ),
          ('sortby', "(discnumber,tracknumber,filename)"),
          ('base', '.'),

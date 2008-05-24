@@ -11,7 +11,7 @@ import shutil
 import os
 import os.path
 import errno
-from audiomangler import scan, Config, util, sync_sets
+from audiomangler import scan, Config, util, sync_sets, get_codec
 
 def parse_options(args = None, options = []):
     if args is None and len(sys.argv) == 1:
@@ -50,8 +50,8 @@ options:""" % sys.argv[0]
 
 common_opts = (
     ('b:','base=','base','base directory for target files'),
-    ('f:','filename=','filename','format for target filenames'),
     ('p:','profile=','profile','profile to load settings from'),
+    ('f:','filename=','filename','format for target filenames'),
 )
 
 rename_opts = common_opts
@@ -105,7 +105,33 @@ sync_opts = common_opts + (
 )
 def sync(args = None):
     args = parse_options(args, sync_opts)
-    (album_list, dir_list) = scan(args)
-    sync_sets(album_list.values())
+    (album_list, dir_list) = scan(args)[:2]
+    targettids = scan(Config['base'])[2]
+    sync_sets(album_list.values(),targettids)
+
+replaygain_opts = common_opts[:2]
+def replaygain(args = None):
+    args = parse_options(args, sync_opts)
+    if not args:
+        args = (Config['base'],)
+    (album_list) = scan(args)[0]
+    for album in album_list.values():
+        profiles = set()
+        for track in album:
+            profiles.add((
+               getattr(track,'type_',None),
+               getattr(getattr(track,'info',None),'sample_rate',None),
+               getattr(getattr(track,'info',None),'channels',None)
+            ))
+        if len(profiles) != 1:
+            continue
+        profile = profiles.pop()
+        if profile[1] not in (8000,11025,12000,16000,22050,24,32,44100,48000):
+            continue
+        codec = get_codec(profile[0])
+        print codec
+        if not codec or not codec._replaygain:
+            continue
+        codec.add_replaygain([t.filename for t in album])
 
 __all__ = ['rename']

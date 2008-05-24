@@ -17,7 +17,7 @@ from tempfile import mkdtemp
 from threading import BoundedSemaphore, RLock
 from subprocess import Popen, PIPE
 from mutagen import FileType
-from audiomangler import Config, from_config, FuncTask, CLITask, TaskSet, Expr, File, util
+from audiomangler import Config, from_config, FuncTask, CLITask, TaskSet, Expr, Format, File, util, NormMetaData
 
 class CodecMeta(type):
     def __new__(cls, name, bases, cls_dict):
@@ -124,7 +124,15 @@ class Codec(object):
             'files':tuple(files)
             }
             args = cls._replaygain_cmd.evaluate(env)
-            CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr=sys.stderr,background=False).run()
+            CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr='/dev/null',background=False).run()
+        elif hasattr(cls,'calc_replaygain'):
+            tracks, album = cls.calc_replaygain(files)
+            for trackfile,trackgain in zip(files,tracks):
+                f = File(trackfile)
+                m = NormMetaData(trackgain + album)
+                m.update(trackgain)
+                m.update(album)
+                m.apply(f)
 
 
 class MP3Codec(Codec):
@@ -161,10 +169,12 @@ class WavPackCodec(Codec):
     replaygain = 'wvgain'
     _to_wav_pipe = True
     _from_wav_pipe = True
+    _replaygain = True
     lossless = True
     _to_wav_pipe_cmd = Expr("(decoder,'-q','-w',infile,'-o','-')")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-q')+encopts+(infile,'-o',outfile)")
+    _replaygain_cmd = Expr("(replaygain,'-qa')+files")
 
 class FLACCodec(Codec):
     ext = 'flac'
@@ -174,10 +184,12 @@ class FLACCodec(Codec):
     replaygain = 'metaflac'
     _to_wav_pipe = True
     _from_wav_pipe = True
+    _replaygain = True
     lossless = True
     _to_wav_pipe_cmd = Expr("(decoder,'-s','-c','-d',infile)")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-s')+encopts+(infile,)")
+    _replaygain_cmd = Expr("(replaygain,'--add-replay-gain')+files")
 
 class OggVorbisCodec(Codec):
     ext = 'ogg'
@@ -228,7 +240,7 @@ def check_and_copy_cover(fileset,targetfiles):
     cover_out_filename = Config['cover_out_filename']
     if not cover_out_filename:
         return
-    cover_out_filename = Expr(cover_out_filename)
+    cover_out_filename = Format(cover_out_filename)
     cover_sizes = cover_sizes.split(',')
     covers_loaded = {}
     covers_written = {}
@@ -238,8 +250,13 @@ def check_and_copy_cover(fileset,targetfiles):
         cover_filenames = cover_filenames.split(',')
     else:
         cover_filenames = ()
+    cover_out_filenames = [cover_out_filename.evaluate({'size':s}) for s in cover_sizes]
     for (infile,targetfile) in zip(fileset,targetfiles):
-        if infile.meta['dir'] in outdirs: continue
+        outdir = os.path.split(targetfile)[0]
+        if outdir in outdirs: continue
+        if reduce(lambda x,y: x and os.path.isfile(os.path.join(outdir,y)), cover_out_filenames, True):
+            outdirs.add(outdir)
+            continue
         i = None
         for filename in (os.path.join(infile.meta['dir'],f) for f in cover_filenames):
             try:
@@ -249,8 +266,9 @@ def check_and_copy_cover(fileset,targetfiles):
             except Exception:
                 continue
         if not i:
-            tags = [(value.type,value) for key,value in infile.tags.items() if key.startswith('APIC') and \
-            hasattr(value,'type') and value.type in (0,3)]
+            tags = [(value.type,value) for key,value in infile.tags.items()
+                if key.startswith('APIC') and hasattr(value,'type')
+                and value.type in (0,3)]
             tags.sort(None,None,True)
             for t,value in tags:
                 i = None
@@ -272,9 +290,11 @@ def check_and_copy_cover(fileset,targetfiles):
             w = int(w*sc+0.5)
             h = int(h*sc+0.5)
             iw = i.resize((w,h),Image.ADAPTIVE)
-            filename = os.path.join(os.path.split(targetfile)[0],cover_out_filename.evaluate({'size':s}).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
+            filename = os.path.join(
+               outdir,cover_out_filename.evaluate({'size':s})
+            )
             iw.save(filename)
-        outdirs.add(infile.meta['dir'])
+        outdirs.add(outdir)
 
 rg_keys = ('replaygain_track_gain','replaygain_track_peak','replaygain_album_gain','replaygain_album_peak')
 def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l):
@@ -291,7 +311,9 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
                 bgprocs = set()
                 dtask = get_codec(i).to_wav_pipe(i.meta['path'],p)
                 etask = targetcodec.from_wav_pipe(p,o)
-                ttask = FuncTask(background=True,target=transcode_track,args=(dtask,etask,trsem))
+                ttask = FuncTask(background=True,target=transcode_track,
+                   args=(dtask,etask,trsem)
+                )
                 if trsem:
                     trsem.acquire()
                     bgprocs.add(ttask.run())
@@ -300,7 +322,9 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
             for task in bgprocs:
                 task.wait()
         elif targetcodec._from_wav_multi:
-            etask = targetcodec.from_wav_multi(workdir,pipefiles[:len(fileset)],outfiles)
+            etask = targetcodec.from_wav_multi(
+               workdir,pipefiles[:len(fileset)],outfiles
+            )
             etask.run()
             for i,o in zip(fileset,pipefiles):
                 task = get_codec(i).to_wav_pipe(i.meta['path'],o)
@@ -344,7 +368,7 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
         if alsem:
             alsem.release()
 
-def sync_sets(sets=[]):
+def sync_sets(sets=[],targettids=()):
     try:
         semct = int(Config['jobs'])
     except (ValueError,TypeError):
@@ -383,13 +407,11 @@ def sync_sets(sets=[]):
         pipes = tuple(pipes)
         workdirs.add((w,pipes))
     for fileset in sets:
-        targetfiles = [f.format(postadd={'type':targetcodec.type_,'ext':targetcodec.ext}) for f in fileset]
-        if reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True):
-            check_and_copy_cover(fileset,targetfiles)
-            continue
-        if reduce(lambda x,y: x and y.type_ in allowedcodecs, fileset, True):
+        if reduce(lambda x,y: x and (y.type_ in allowedcodecs), fileset, True):
             targetfiles = [f.format() for f in fileset]
-            if not reduce(lambda x,y: x and os.path.isfile(y), targetfiles, True):
+            if not reduce(lambda x,y: x and (y.tid in targettids),
+               fileset, True):
+                print "copying files"
                 dirs = set()
                 for i in fileset:
                     t = i.format()
@@ -400,14 +422,18 @@ def sync_sets(sets=[]):
                             os.makedirs(targetdir)
                     print "%s -> %s" % (i.filename,t)
                     util.copy(i.filename,t)
-            check_and_copy_cover(fileset,targetfiles)
             continue
         if alsem:
             alsem.acquire()
             for task in list(bgtasks):
                 if task.poll():
                     bgtasks.remove(task)
-        task = FuncTask(background=True,target=transcode_set,args=(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l))
+        postadd = {'type':targetcodec.type_,'ext':targetcodec.ext}
+        targetfiles = [f.format(postadd=postadd)for f in fileset]
+        task = FuncTask(
+           background=True,target=transcode_set,args=(
+              targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l
+        ))
         if alsem:
             bgtasks.add(task.run())
         else:
@@ -425,4 +451,4 @@ def get_codec(item):
         item = getattr(item,'type_')
     return codec_map[item]
 
-__all__ = ['sync_sets']
+__all__ = ['sync_sets','get_codec']

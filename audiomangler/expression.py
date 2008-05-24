@@ -177,12 +177,18 @@ class AsIs(Value):
         return evaluate(self.subvalue,cdict)
 
 class Format(Value):
-    def __init__(self,items):
+    _cache = {}
+    def __new__(cls,items):
         if isinstance(items, basestring):
-            items = formatexpr.parseString(items)
-        elif isinstance(items,Format):
-            items = items.parsedformat
-        self.parsedformat = items
+            if items not in cls._cache:
+                ret = Value.__new__(cls)
+                ret.parsedformat = formatexpr.parseString(items)
+                cls._cache[items] = ret
+            return cls._cache[items]
+        elif isinstance(items,cls):
+            return items
+    def __init__(self,items):
+        pass
     def sanitize(self,instring):
         return re.sub(r'[]?[/\\=+<>:;",*|]','_',instring)
     def evaluate(self, cdict):
@@ -197,12 +203,18 @@ class Format(Value):
         return ''.join(reslist)
 
 class Expr(Value):
+    _cache = {}
+    def __new__(cls,items):
+        if isinstance(items, basestring):
+            if items not in cls._cache:
+                ret = Value.__new__(cls)
+                ret.parsedformat = expr.parseString(items)
+                cls._cache[items] = ret
+            return cls._cache[items]
+        elif isinstance(items,cls):
+            return items
     def __init__(self,items):
-        if isinstance(items,basestring):
-            items = expr.parseString(items)
-        elif isinstance(items,Expr):
-            items = items.parsedformat
-        self.parsedformat = items
+        pass
     def evaluate(self, cdict):
         return evaluate(self.parsedformat[0],cdict)
 

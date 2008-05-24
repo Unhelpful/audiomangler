@@ -13,8 +13,7 @@ setup(
     packages=['audiomangler'],
     package_dir={'audiomangler': 'audiomangler'},
     install_requires='''
-    	pyparsing >= 1.4.11
-        PIL >= 1.1.6
+        pyparsing >= 1.4.11
         mutagen >= 1.13
     ''',
     entry_points={
@@ -22,6 +21,7 @@ setup(
             'am_rename = audiomangler.cli:rename',
             'am_sync = audiomangler.cli:sync',
             'am_transcode = audiomangler.cli:sync',
+            'am_replaygain = audiomangler.cli:replaygain',
         ]
     },
 )
