@@ -57,7 +57,7 @@ common_opts = (
 rename_opts = common_opts
 def rename(args = None):
     args = parse_options(args, rename_opts)
-    (album_list, dir_list) = scan(args)
+    dir_list = scan(args)[1]
     for (dir_,files) in dir_list.items():
         print "from dir %s:" % dir_
         dstdirs = set()
