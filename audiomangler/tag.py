@@ -542,6 +542,7 @@ class NormMetaData(dict):
         if itemtrans:
             target.tags.update(itemtrans(k,v) for k,v in newmeta.items())
         else:
+            print newmeta
             target.tags.update(newmeta)
 
 __all__ = ['NormMetaData']

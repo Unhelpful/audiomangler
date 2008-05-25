@@ -130,9 +130,8 @@ class Codec(object):
             for trackfile,trackgain in zip(files,tracks):
                 f = File(trackfile)
                 m = NormMetaData(trackgain + album)
-                m.update(trackgain)
-                m.update(album)
                 m.apply(f)
+                f.save()
 
 
 class MP3Codec(Codec):
@@ -422,6 +421,10 @@ def sync_sets(sets=[],targettids=()):
                             os.makedirs(targetdir)
                     print "%s -> %s" % (i.filename,t)
                     util.copy(i.filename,t)
+                codecs = set((get_codec(f) for f in fileset))
+                codec = codecs.pop()
+                if codec and not codecs and codec._replaygain:
+                    codec.add_replaygain(targetfiles)
                 check_and_copy_cover(fileset,targetfiles)
             continue
         postadd = {'type':targetcodec.type_,'ext':targetcodec.ext}
