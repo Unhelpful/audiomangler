@@ -348,7 +348,7 @@ def transcode_set(targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_
             metas.append(meta)
         if newreplaygain and targetcodec._replaygain:
             targetcodec.add_replaygain(outfiles,metas)
-        for m,o,t in zip(metas,outfiles,targetfiles):
+        for i,m,o,t in zip(fileset,metas,outfiles,targetfiles):
             o = File(o)
             m.apply(o)
             o.save()
