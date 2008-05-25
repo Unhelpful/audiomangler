@@ -84,7 +84,7 @@ Config = AMConfig(
             " or ('dir',dir)"
          ),
          ('trackid',
-            "musicbrainz_albumid and musicip_trackid and ('mbid',musicip_puid,musicbrainz_albumid,tracknumber) or "
+            "musicbrainz_albumid and musicip_puid and ('mbid',musicip_puid,musicbrainz_albumid,tracknumber) or "
             "('meta',title,artist,album,year,catalognumber or asin or isrc,tracknumber)"
          ),
          ('sortby', "(discnumber,tracknumber,filename)"),

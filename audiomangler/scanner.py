@@ -8,12 +8,22 @@
 import os
 import os.path
 try:
-    import cPickle as pickle
+    import shelve
 except ImportError:
-    import pickle
+    shelve = None
 from audiomangler import from_config, NormMetaData, Expr
 from mutagen import File
 import time
+
+def scan_track(path, from_dir = ''):
+    t = None
+    try:
+        t = File(path)
+    except Exception: pass
+    if t is not None:
+        if from_dir:
+            t.relpath = t.filename.replace(item,'',1).lstrip('/')
+    return t
 
 def scan(items, groupby = None, sortby = None):
     groupbytxt, sortbytxt, trackidtxt = from_config('groupby', 'sortby', 'trackid')
@@ -25,27 +35,23 @@ def scan(items, groupby = None, sortby = None):
         cachefile = os.path.join(homedir,'.audiomangler','cache')
     else:
         cachefile = 'audiomangler.cache'
-    try:
-        dircache = pickle.load(open(cachefile,'rb'))
-    except Exception:
-        dircache = {}
+    dircache = {}
+    if shelve:
+        try:
+            dircache = shelve.open(cachefile,protocol=-2)
+        except Exception:
+            pass
     if isinstance(items,basestring):
         items = (items,)
     tracks = []
     scanned = set()
-    removed = set()
     newdircache = {}
     items = map(os.path.abspath, items)
     for item in items:
         if item in scanned:
             continue
-        t = None
-        try:
-            t = File(item)
-        except Exception: pass
+        t = scan_track(item)
         if t is not None:
-            t.relpath = t.filename.replace(item,'',1).lstrip('/')
-            t.sortkey = t.meta.evaluate(sortby)
             tracks.append(t)
             scanned.add(item)
         else:
@@ -56,35 +62,46 @@ def scan(items, groupby = None, sortby = None):
                     dst = os.stat(path)
                 except OSError:
                     print "unable to stat dir %s" % path
-                    removed.add(path)
                     continue
                 cached = dircache.get(path,None)
                 if cached and cached['key'] == (dst.st_ino, dst.st_mtime):
-                    newcached = cached.copy()
-                    newcached['tracks'] = []
+                    newcached = cached
+                    newtracks = []
+                    newfiles = []
                     for track in cached['tracks']:
-                        fst = os.stat(track['path'])
+                        try:
+                            fst = os.stat(track['path'])
+                        except Exception:
+                            continue
                         if track['key'] == (fst.st_ino, fst.st_mtime):
-                            newcached['tracks'].append(track)
+                            newtracks.append(track)
                             t = track['obj']
                             t._meta_cache = (False,False)
                             t.relpath = t.filename.replace(item,'',1).lstrip('/')
-                            t.sortkey = t.meta.evaluate(sortby)
                             tracks.append(t)
                         else:
-                            t = None
-                            try:
-                                t = File(item)
-                            except Exception: pass
+                            t = scan_track(track['path'])
                             if t is not None:
-                                t.relpath = t.filename.replace(item,'',1).lstrip('/')
-                                t.sortkey = t.meta.evaluate(sortby)
                                 tracks.append(t)
-                                newcached['tracks'].append({'path':track['path'],'obj':t,'key':(fst.st_ino,fst.st_mtime)})
+                                newtracks.append({'path':track['path'],'obj':t,'key':(fst.st_ino,fst.st_mtime)})
+                    for file_ in cached['files']:
+                        try:
+                            fst = os.stat(file_['path'])
+                        except Exception:
+                            continue
+                        if file_['key'] == (fst.st_ino, fst.st_mtime):
+                            newfiles.append(file_)
+                        else:
+                            t = scan_track(file_['path'])
+                            if t is not None:
+                                tracks.append(t)
+                                newtracks.append({'path':file_['path'],'obj':t,'key':(fst.st_ino,fst.st_mtime)})
+                            else:
+                                newfiles.append({'path':file_['path'],'key':(fst.st_ino,fst.st_mtime)})
+                    newcached['tracks'] = newtracks
+                    newcached['files'] = newfiles
                 else:
-                    if cached:
-                        removed.add(path)
-                    newcached = {'tracks':[],'dirs':[]}
+                    newcached = {'tracks':[],'dirs':[],'files':[]}
                     newcached['key'] = (dst.st_ino, dst.st_mtime)
                     paths = (os.path.join(path,f) for f in sorted(os.listdir(path)))
                     for filename in paths:
@@ -95,16 +112,18 @@ def scan(items, groupby = None, sortby = None):
                         if os.path.isdir(filename):
                             newcached['dirs'].append(filename)
                         elif os.path.isfile(filename):
-                            t = None
                             try:
-                                t = File(filename)
-                            except Exception: raise
-                            if t is not None:
                                 fst = os.stat(filename)
-                                t.relpath = os.path.split(t.filename.replace(item,'',1).lstrip('/'))[0]
-                                t.sortkey = t.meta.evaluate(sortby)
+                            except Exception:
+                                continue
+                            t = scan_track(filename)
+                            if t is not None:
                                 tracks.append(t)
                                 newcached['tracks'].append({'path':filename,'obj':t,'key':(fst.st_ino,fst.st_mtime)})
+                            else:
+                                newcached['files'].append({'path':filename,'key':fst})
+                        else:
+                            newcached['files'].append({'path':filename,'key':fst})
                 dirs.extend(newcached['dirs'])
                 newdircache[path] = newcached
     for item in items:
@@ -112,14 +131,13 @@ def scan(items, groupby = None, sortby = None):
             if key.startswith(item):
                 del dircache[key]
     dircache.update(newdircache)
-    try:
-        pickle.dump(dircache,open(cachefile,'wb'),-1)
-    except Exception:
-        pass
+    if hasattr(dircache,'close'):
+        dircache.close()
     albums = {}
     dirs = {}
     trackids = {}
     for t in tracks:
+        t.sortkey = t.meta.evaluate(sortby)
         albums.setdefault(t.meta.evaluate(groupby),[]).append(t)
         dirs.setdefault(t.meta['dir'],[]).append(t)
         t.tid = t.meta.evaluate(trackid)

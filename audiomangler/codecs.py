@@ -422,14 +422,18 @@ def sync_sets(sets=[],targettids=()):
                             os.makedirs(targetdir)
                     print "%s -> %s" % (i.filename,t)
                     util.copy(i.filename,t)
+                check_and_copy_cover(fileset,targetfiles)
+            continue
+        postadd = {'type':targetcodec.type_,'ext':targetcodec.ext}
+        targetfiles = [f.format(postadd=postadd)for f in fileset]
+        if reduce(lambda x,y: x and y.tid in targettids, fileset, True):
+            check_and_copy_cover(fileset,targetfiles)
             continue
         if alsem:
             alsem.acquire()
             for task in list(bgtasks):
                 if task.poll():
                     bgtasks.remove(task)
-        postadd = {'type':targetcodec.type_,'ext':targetcodec.ext}
-        targetfiles = [f.format(postadd=postadd)for f in fileset]
         task = FuncTask(
            background=True,target=transcode_set,args=(
               targetcodec,fileset,targetfiles,alsem,trsem,workdirs,workdirs_l
