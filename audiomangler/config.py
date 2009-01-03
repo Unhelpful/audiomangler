@@ -45,10 +45,10 @@ class AMConfig(RawConfigParser):
             self._cache[key] = self._current_values[key]
             return self._current_values[key]
         trysources = {
-           'preset':('profile','type','DEFAULT'),
-           'type':('profile','DEFAULT'),
-           'profile':('DEFAULT',)
-        }.get(key, ('profile','type','preset','DEFAULT'))
+           'preset':('profile','type','defaults'),
+           'type':('profile','defaults'),
+           'profile':('defaults',)
+        }.get(key, ('profile','type','preset','defaults'))
         for source in trysources:
             if source == 'preset':
                 source = [self['type']]
@@ -58,7 +58,7 @@ class AMConfig(RawConfigParser):
                 if not source[2]:
                     continue
                 source = ''.join(source)
-            elif source != 'DEFAULT':
+            elif source != 'defaults':
                 source = self[source]
             if not source:
                 continue
@@ -76,7 +76,7 @@ class AMConfig(RawConfigParser):
 
 Config = AMConfig(
    (
-      ('DEFAULT',
+      ('defaults',
          ('groupby',
             "musicbrainz_albumid and ('album',musicbrainz_albumid) or "
             "album and (albumartist or artist) and "
