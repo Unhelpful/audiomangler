@@ -97,7 +97,7 @@ def id3rva2in(i, o, k, v):
     if v.channel != 1:
         return
     if not v.desc:
-        if 'replaygain_track_gain' in self:
+        if 'replaygain_track_gain' in o:
             return
         else:
             target = 'track'
