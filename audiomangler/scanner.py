@@ -22,14 +22,19 @@ def scan_track(path, from_dir = ''):
     except Exception: pass
     if t is not None:
         if from_dir:
-            t.relpath = t.filename.replace(item,'',1).lstrip('/')
+            t.relpath = t.filename.replace(from_dir,'',1).lstrip('/')
+            t.reldir = t.relpath.rsplit('/',1)
+            if len(t.reldir) > 1:
+                t.reldir = t.reldir[0]
+            else:
+                t.reldir = ''
     return t
 
-def scan(items, groupby = None, sortby = None):
+def scan(items, groupby = None, sortby = None, trackid = None):
     groupbytxt, sortbytxt, trackidtxt = from_config('groupby', 'sortby', 'trackid')
-    groupby = Expr(groupbytxt)
-    sortby = Expr(sortbytxt)
-    trackid = Expr(trackidtxt)
+    groupby = Expr(groupby or groupbytxt)
+    sortby = Expr(sortby or sortbytxt)
+    trackid = Expr(trackid or trackidtxt)
     homedir = os.getenv('HOME')
     if homedir is not None:
         cachefile = os.path.join(homedir,'.audiomangler','cache')
@@ -78,6 +83,11 @@ def scan(items, groupby = None, sortby = None):
                             t = track['obj']
                             t._meta_cache = (False,False)
                             t.relpath = t.filename.replace(item,'',1).lstrip('/')
+                            t.reldir = t.relpath.rsplit('/',1)
+                            if len(t.reldir) > 1:
+                                t.reldir = t.reldir[0]
+                            else:
+                                t.reldir = ''
                             tracks.append(t)
                         else:
                             t = scan_track(track['path'])
@@ -123,7 +133,7 @@ def scan(items, groupby = None, sortby = None):
                             else:
                                 newcached['files'].append({'path':filename,'key':fst})
                         else:
-                            newcached['files'].append({'path':filename,'key':fst})
+                            continue
                 dirs.extend(newcached['dirs'])
                 newdircache[path] = newcached
     for item in items:

@@ -67,8 +67,8 @@ class FuncTask(BaseTask):
     def runsaveexc(self):
         try:
             self.runfg()
-        except Exception, e:
-            self.exc = e
+        except Exception:
+            self.exc_info = sys.exc_info()
 
     @synchronized('_lock')
     def wait(self):
@@ -77,8 +77,8 @@ class FuncTask(BaseTask):
         elif not hasattr(self,'thread'):
             return False
         self.thread.join()
-        if hasattr(self, 'exc'):
-            raise self.exc
+        if hasattr(self, 'exc_info'):
+            sys.excepthook(*exc_info)
         return True
 
     @synchronized('_lock')
@@ -89,8 +89,8 @@ class FuncTask(BaseTask):
             return False
         elif self.thread.isAlive():
             return False
-        elif hasattr(self, 'exc'):
-            raise self.exc
+        elif hasattr(self, 'exc_info'):
+            sys.excepthook(*exc_info)
         return True
 
 class CLITask(BaseTask):

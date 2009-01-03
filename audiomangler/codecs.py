@@ -124,7 +124,7 @@ class Codec(object):
             'files':tuple(files)
             }
             args = cls._replaygain_cmd.evaluate(env)
-            CLITask(args=args,stdin='/dev/null',stdout='/dev/null',stderr='/dev/null',background=False).run()
+            CLITask(args=args,stdin='/dev/null',background=False).run()
         elif hasattr(cls,'calc_replaygain'):
             tracks, album = cls.calc_replaygain(files)
             for trackfile,trackgain in zip(files,tracks):
@@ -173,7 +173,7 @@ class WavPackCodec(Codec):
     _to_wav_pipe_cmd = Expr("(decoder,'-q','-w',infile,'-o','-')")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-q')+encopts+(infile,'-o',outfile)")
-    _replaygain_cmd = Expr("(replaygain,'-qa')+files")
+    _replaygain_cmd = Expr("(replaygain,'-a')+files")
 
 class FLACCodec(Codec):
     ext = 'flac'
@@ -264,6 +264,7 @@ def check_and_copy_cover(fileset,targetfiles):
                 i.load()
             except Exception:
                 continue
+            if i: break
         if not i:
             tags = [(value.type,value) for key,value in infile.tags.items()
                 if key.startswith('APIC') and hasattr(value,'type')
@@ -292,6 +293,7 @@ def check_and_copy_cover(fileset,targetfiles):
             filename = os.path.join(
                outdir,cover_out_filename.evaluate({'size':s})
             )
+            print "save cover %s" % filename
             iw.save(filename)
         outdirs.add(outdir)
 
@@ -425,7 +427,7 @@ def sync_sets(sets=[],targettids=()):
                 codec = codecs.pop()
                 if codec and not codecs and codec._replaygain:
                     codec.add_replaygain(targetfiles)
-                check_and_copy_cover(fileset,targetfiles)
+            check_and_copy_cover(fileset,targetfiles)
             continue
         postadd = {'type':targetcodec.type_,'ext':targetcodec.ext}
         targetfiles = [f.format(postadd=postadd)for f in fileset]

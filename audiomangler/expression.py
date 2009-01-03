@@ -88,6 +88,14 @@ class TupleValue(Value):
     def evaluate(self,cdict):
         return tuple(evaluate(item,cdict) for item in self.items)
 
+class ListValue(Value):
+    #lists are mutable, and there are other problems if we try to reduce a
+    #constant listexpr to a literal constant, so we don't
+    def __init__(self,items):
+        self.items = items
+    def evaluate(self,cdict):
+        return [evaluate(item,cdict) for item in self.items]
+
 class ReductionValue(Value):
     opstbl = {
         '%': lambda x,y: x % y,
@@ -224,6 +232,9 @@ def NumericValue(string):
     else:
         return int(string)
 
+def nonefunc(s, loc, toks):
+    toks[0] = None
+
 doubquot = QuotedString('"','\\','\\')
 singquot = QuotedString("'",'\\','\\')
 quot = doubquot | singquot
@@ -234,6 +245,8 @@ number = Regex('([0-9]+(\.[0-9]*)?|(\.[0-9]+))')
 number.setParseAction(lambda s,loc,toks: NumericValue(toks[0]))
 truth = Keyword('True') | Keyword('False')
 truth.setParseAction(lambda s,loc,toks: toks[0] == 'True')
+none = Keyword('None')
+none.setParseAction(nonefunc)
 validname = Word(alphas,alphanums+'_')
 lookup = validname.copy()
 lookup.setParseAction(lambda s,loc,toks: LookupValue(u''.join(toks)))
@@ -243,11 +256,14 @@ arglist = delimitedList(expr)
 funccall = validname + lparen + spaces + arglist + spaces + rparen
 funccall.setParseAction(lambda s,loc,toks: FuncValue(toks))
 parenexpr = lparen + spaces + expr + spaces + rparen
-tupleelem = expr + Literal(',').suppress()
-tupleexpr = lparen + tupleelem + ZeroOrMore(tupleelem) + Optional(expr) + rparen
+tupleexpr = lparen + delimitedList(expr) + Optional(Literal(',').suppress()) + rparen
 tupleexpr.setParseAction(lambda s,loc,toks: TupleValue(toks))
+lbracket = Literal('[').suppress()
+rbracket = Literal(']').suppress()
+listexpr = lbracket + delimitedList(expr) + Optional(Literal(',').suppress()) + rbracket
+listexpr.setParseAction(lambda s,loc,toks: ListValue(toks))
 sumop = Literal('+') | Literal('-')
-atom =  Optional(sumop + spaces) + (truth | funccall | quot | lookup | number | parenexpr | tupleexpr) + spaces
+atom =  Optional(sumop + spaces) + (truth | none | funccall | quot | lookup | number | parenexpr | tupleexpr | listexpr) + spaces
 atom.setParseAction(lambda s,loc,toks:UnaryOperatorValue(toks))
 productop = Literal('*') | Literal('/') | Literal('%')
 product = atom + ZeroOrMore(spaces + productop + spaces + atom)
