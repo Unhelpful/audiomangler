@@ -146,7 +146,7 @@ class MP3Codec(Codec):
     @classmethod
     def calc_replaygain(cls,files):
         tracks = []
-        args = [cls.replaygain,'-qo','-s','s']
+        args = [cls.replaygain,'-q','-o','-s','s']
         args.extend(files)
         p = Popen(args=args, stdout=PIPE, stderr=PIPE)
         (out, err) = p.communicate()
