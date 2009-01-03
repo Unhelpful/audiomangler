@@ -59,7 +59,6 @@ def rename(args = None):
     args = parse_options(args, rename_opts)
     dir_list = scan(args)[1]
     for (dir_,files) in dir_list.items():
-        print type(dir_)
         dir_ = dir_.encode(Config['fs_encoding'],Config['fs_encoding_error'] or 'replace')
         print "from dir %s:" % dir_
         dstdirs = set()
@@ -85,7 +84,6 @@ def rename(args = None):
             for file_ in os.listdir(dir_):
                 src = os.path.join(dir_,file_)
                 dst = os.path.join(dstdir,file_)
-                print type(src),type(dst)
                 print "  %s -> %s" % (src,dst)
                 util.move(src,dst)
             while len(os.listdir(dir_)) == 0:
@@ -132,7 +130,6 @@ def replaygain(args = None):
         if profile[1] not in (8000,11025,12000,16000,22050,24,32,44100,48000):
             continue
         codec = get_codec(profile[0])
-        print codec
         if not codec or not codec._replaygain:
             continue
         codec.add_replaygain([t.filename for t in album])
