@@ -132,6 +132,8 @@ def replaygain(args = None):
         codec = get_codec(profile[0])
         if not codec or not codec._replaygain:
             continue
+        if reduce(lambda x,y: x and y.has_replaygain(), album, True):
+            continue
         codec.add_replaygain([t.filename for t in album])
 
 __all__ = ['rename']

@@ -61,9 +61,13 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
     filename = Format(filename)
     return os.path.join(base,filename.evaluate(meta))
 
+def has_replaygain(self):
+    return reduce(lambda x,y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
+
 FileType.format = format
 FileType.meta = property(_get_meta,_set_meta)
 FileType.lossless = False
+FileType.has_replaygain = has_replaygain
 
 ASF.ext = 'asf'
 ASF.type_ = 'asf'
