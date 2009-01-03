@@ -12,7 +12,7 @@ ParserElement.enablePackrat()
 
 class Value(object):
     def __new__(cls,*args,**kw):
-        ret = object.__new__(cls,*args,**kw)
+        ret = object.__new__(cls)
         return ret
     pass
 
