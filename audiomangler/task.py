@@ -90,7 +90,7 @@ class FuncTask(BaseTask):
         elif self.thread.isAlive():
             return False
         elif hasattr(self, 'exc_info'):
-            sys.excepthook(*exc_info)
+            sys.excepthook(*(self.exc_info))
         return True
 
 class CLITask(BaseTask):
