@@ -12,10 +12,6 @@ setup(
     author_email='andrew.mahone@gmail.com',
     packages=['audiomangler'],
     package_dir={'audiomangler': 'audiomangler'},
-    install_requires='''
-        pyparsing >= 1.4.11
-        mutagen >= 1.13
-    ''',
     entry_points={
         'console_scripts': [
             'am_rename = audiomangler.cli:rename',
