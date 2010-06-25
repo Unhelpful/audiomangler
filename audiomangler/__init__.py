@@ -6,7 +6,7 @@
 #
 ###########################################################################
 from mutagen import File
-import audiomangler.util
+from audiomangler import util
 from audiomangler.config import *
 from audiomangler.expression import *
 from audiomangler.tag import *
