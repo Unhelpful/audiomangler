@@ -203,7 +203,7 @@ class OggVorbisCodec(Codec):
     _to_wav_pipe_cmd = Expr("(decoder,'-Q','-o','-',infile)")
     _to_wav_pipe_stdout = Expr("outfile")
     _from_wav_pipe_cmd = Expr("(encoder,'-Q')+encopts+('-o',outfile,infile)")
-    _replaygain_cmd = Expr("(replaygain,'-q','-a')+files)")
+    _replaygain_cmd = Expr("(replaygain,'-q','-a')+files")
 
     @classmethod
     def calc_replaygain(cls,files):
