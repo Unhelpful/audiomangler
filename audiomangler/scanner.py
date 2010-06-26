@@ -49,7 +49,7 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     dircache = {}
     if shelve:
         try:
-            dircache = shelve.open(cachefile,protocol=-2)
+            dircache = shelve.open(cachefile)
         except Exception:
             pass
     if isinstance(items,basestring):
