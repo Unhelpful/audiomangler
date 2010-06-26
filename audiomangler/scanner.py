@@ -38,7 +38,12 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     trackid = Expr(trackid or trackidtxt)
     homedir = os.getenv('HOME')
     if homedir is not None:
-        cachefile = os.path.join(homedir,'.audiomangler','cache')
+        cachefile = os.path.join(homedir,'.audiomangler')
+        try:
+            os.mkdir(cachefile)
+        except OSError:
+            pass
+        cachefile = os.path.join(cachefile,'cache')
     else:
         cachefile = 'audiomangler.cache'
     dircache = {}
