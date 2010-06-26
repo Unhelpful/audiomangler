@@ -6,292 +6,245 @@
 # Copyright: See COPYING file that comes with this distribution
 #
 ###########################################################################
-from pyparsing import *
-from audiomangler import Config
+from __future__ import absolute_import
+import os.path
 import re
-ParserElement.enablePackrat()
+import codecs
+import encodings.punycode
+from RestrictedPython.RCompile import RExpression
+from RestrictedPython.MutatingWalker import walk
+from RestrictedPython.Guards import safe_builtins as eval_builtins
+from string import maketrans
+from compiler import ast
+from audiomangler import Config
 
-class Value(object):
-    def __new__(cls,*args,**kw):
-        ret = object.__new__(cls)
-        return ret
-    pass
+breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
+pathseptrans = unicode(maketrans('/','_')[:48])
+pathtrans = unicode(maketrans(r'/\[]?=+<>;",*|', os.path.sep + '_' * 13)[:125])
+
+eval_builtins = eval_builtins.copy()
+eval_builtins.update(filter=filter, map=map, max=max, min=min, reduce=reduce, reversed=reversed, slice=slice, sorted=sorted)
+del eval_builtins['delattr']
+del eval_builtins['setattr']
+eval_globals = {'__builtins__':eval_builtins, '_getattr_':getattr, '_getitem_': lambda x,y: x[y]}
+
+def underscorereplace_errors(e):
+    return (u'_' * (e.end - e.start), e.end)
+
+codecs.register_error('underscorereplace', underscorereplace_errors)
 
 def evaluate(item,cdict):
-    if isinstance(item,Value):
+    if isinstance(item,Expr):
         return item.evaluate(cdict)
     else:
         return item
 
-#this is necessary because Formats need to know if items are substitutions,
-#even if the items are literals.
-class SubsValue(Value):
-    def __new__(cls,data):
-        if isinstance(data,Value):
-            return data
+class InlineFuncsVisitor:
+    def __init__(self, filename, baseexpr):
+        self.filename = filename
+        self.baseexpr = baseexpr
+    def visitCallFunc(self, node, *args):
+        if not hasattr(node, 'node'):
+            return node
+        if not isinstance(node.node, ast.Name):
+            return node
+        handler = getattr(self, '_' + node.node.name, None)
+        if handler:
+            return handler(node, *args)
         else:
-            return Value.__new__(cls,data)
-    def __init__(self,data):
-        self.data = data
+            return node
+    def _first(self, node, *args):
+        clocals = ast.Const(locals)
+        clocals.lineno = node.lineno
+        clocals = ast.CallFunc(clocals,[],None,None)
+        clocals.lineno = node.lineno
+        exp = ast.Or([])
+        exp.lineno = node.lineno
+        for item in node.args:
+            if not isinstance(item, ast.Const) or isinstance(item.value, basestring):
+                if isinstance(item, ast.Const):
+                    item = item.value
+                item = self.baseexpr(item, self.filename)
+                item = ast.Const(item.evaluate)
+                item.lineno = node.lineno
+                item = ast.CallFunc(item, [clocals])
+                item.lineno = node.lineno
+            exp.nodes.append(item)
+        return exp
 
-    def evaluate(self,cdict):
-        return self.data
+class Expr(RExpression,object):
+    _globals = eval_globals
+    _cache = {}
 
-class LookupValue(Value):
-    def __init__(self,key):
-        self.key = key
-    def evaluate(self, cdict):
-        return cdict.get(self.key,u'')
+    def __new__(cls, source, filename="", baseexpr=None):
+        key = (cls, source, filename, baseexpr)
+        if isinstance(source, basestring):
+            if key not in cls._cache:
+                cls._cache[key] = object.__new__(cls)
+            return cls._cache[key]
+        elif isinstance(source, ast.Node):
+            return object.__new__(cls)
+        elif isinstance(source,cls):
+            return source
 
-class FuncValue(Value):
-    def __init__(self,args):
-        self.funcname = args[0]
-        self.args = tuple(args[1:])
-
-    def evaluate(self, cdict):
-        return getattr(self,self.funcname)(cdict,*self.args)
-
-    def firstof(self,cdict,*args):
-        for arg in args:
-            arg = evaluate(arg,cdict)
-            if arg:
-                return arg
-        return u''
-
-    def format(self,cdict,*args):
-        return evaluate(args[0],cdict) % (evaluate(arg,cdict) for arg in args[1:])
-
-    def iftrue(self,cdict,*args):
-        cond = evaluate(args[0],cdict)
-        if len(args) == 1:
-            if cond: return cond
-        elif len(args) == 2:
-            if cond: return evaluate(args[1],cdict)
-        else:
-            if cond:
-                return evaluate(args[1],cdict)
-            else:
-                return evaluate(args[2],cdict)
-        return ''
-    locals()['if'] = iftrue
-
-    def joinpath(self, cdict, *args):
-        return os.path.join(evaluate(arg,cdict) for arg in args)
-
-class TupleValue(Value):
-    def __new__(cls,items):
-        if not [item for item in items if isinstance(item,Value)]:
-            return tuple(items)
-        else:
-            return Value.__new__(cls,items)
-    def __init__(self,items):
-        self.items = items
-    def evaluate(self,cdict):
-        return tuple(evaluate(item,cdict) for item in self.items)
-
-class ListValue(Value):
-    #lists are mutable, and there are other problems if we try to reduce a
-    #constant listexpr to a literal constant, so we don't
-    def __init__(self,items):
-        self.items = items
-    def evaluate(self,cdict):
-        return [evaluate(item,cdict) for item in self.items]
-
-class ReductionValue(Value):
-    opstbl = {
-        '%': lambda x,y: x % y,
-        '/': lambda x,y: x / y,
-        '*': lambda x,y: x * y,
-        '+': lambda x,y: x + y,
-        '-': lambda x,y: x - y,
-        '<': lambda x,y: x < y,
-        '>': lambda x,y: x > y,
-        '<=': lambda x,y: x <= y,
-        '>=': lambda x,y: x >= y,
-        '!=': lambda x,y: x != y,
-        '==': lambda x,y: x == y,
-    }
-    def __new__(cls,args):
-        if len(args) == 1:
-            return args[0]
-        else:
-            if [args[i] for i in range(0,len(args),2) if isinstance(args[i],Value)]:
-                return Value.__new__(cls,args)
-            else:
-                first = args[0]
-                rest = tuple(tuple(args[n:n+2]) for n in range(1,len(args)-1,2))
-                return reduce(lambda x,y: cls.opstbl[y[0]](x,y[1]), rest, first)
-
-    def __init__(self,args):
-        #because of single-term reduction bubbling up through parse levels, 
-        #we might get init'ed again.
-        if hasattr(self,'first') and hasattr(self,'rest'):
+    def __init__(self, source, filename="", baseexpr=None):
+        if hasattr(self,'_compiled'):
             return
-        self.first = args[0]
-        if len(args) % 2 != 1:
-            raise ValueError('wrong number of arguments')
-        self.rest = tuple((self.opstbl[args[n]],args[n+1]) for n in range(1,len(args)-1,2))
-
-    def evaluate(self,cdict):
-        return reduce(lambda x,y: y[0](x,evaluate(y[1],cdict)), self.rest, evaluate(self.first,cdict))
-
-class BooleanReductionValue(ReductionValue):
-    #values need to be wrapped in a lambda, then called, to prevent their
-    #evaluation in the short-circuit case
-    opstbl = {
-        'and': lambda x,y: x and y(),
-        'or': lambda x,y: x or y(),
-    }
-
-    def evaluate(self,cdict):
-        return reduce(lambda x,y: y[0](x,lambda:evaluate(y[1],cdict)), self.rest, evaluate(self.first,cdict))
-
-    #this means we also need to change the formula for constant reduction
-    def __new__(cls,args):
-        if len(args) == 1:
-            return args[0]
+        self._source = source
+        self._baseexpr = baseexpr or getattr(self.__class__,'_baseexpr', None) or self.__class__
+        self._filename = filename
+        if not isinstance(source, ast.Node):
+            RExpression.__init__(self, source, filename)
+            source = self._get_tree()
         else:
-            if [args[i] for i in range(0,len(args),2) if isinstance(args[i],Value)]:
-                return Value.__new__(cls,args)
-            else:
-                first = args[0]
-                rest = tuple(tuple(args[n:n+2]) for n in range(1,len(args)-1,2))
-                return reduce(lambda x,y: cls.opstbl[y[0]](x,lambda:y[1]), rest, first)
+            if not (isinstance(source, ast.Expression)):
+                source = ast.Expression(source)
+            source.filename = filename
+            walk(source, InlineFuncsVisitor(self._filename, self._baseexpr))
+        gen = self.CodeGeneratorClass(source)
+        self._compiled = gen.getCode()
 
-class UnaryOperatorValue(Value):
-    opstbl = {
-        '-': lambda x: -x,
-        '+': lambda x: +x,
-        'not': lambda x: not x,
-    }
-    def __new__(cls, args):
-        if len(args) == 1:
-            return args[0]
-        else:
-            if isinstance(args[1],Value):
-                return Value.__new__(value,args)
-            else:
-                return cls.opstbl[args[0]](args[1])
-    def __init__(self,args):
-        self.op = self.opstbl(args[0])
-        self.value = args[1]
-    def evaluate(self,cdict):
-        return self.op(evaluate(self.value,cdict))
+    def __hash__(self):
+        return hash(self._compiled)
 
-class AsIs(Value):
-    def __init__(self,items):
-        self.subvalue = items[0]
+    def _get_tree(self):
+        tree = RExpression._get_tree(self)
+        walk(tree, InlineFuncsVisitor(self.filename, self._baseexpr))
+        return tree
 
-    def evaluate(self,cdict):
-        return evaluate(self.subvalue,cdict)
-
-class Format(Value):
-    _cache = {}
-    def __new__(cls,items):
-        if isinstance(items, basestring):
-            if items not in cls._cache:
-                ret = Value.__new__(cls)
-                ret.parsedformat = formatexpr.parseString(items)
-                cls._cache[items] = ret
-            return cls._cache[items]
-        elif isinstance(items,cls):
-            return items
-    def __init__(self,items):
-        pass
-    def sanitize(self,instring):
-        return re.sub(r'[]?[/\\=+<>:;",*|]','_',instring)
     def evaluate(self, cdict):
-        reslist = []
-        for item in self.parsedformat:
-            if isinstance(item,Value):
-                if isinstance(item,AsIs):
-                    item = re.sub(r'[]?[\\=+<>:;",*|]','_',item.evaluate(cdict).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
+        try:
+            return eval(self._compiled, self._globals, cdict)
+        except NameError:
+            return None
+
+class StringExpr(Expr):
+    def evaluate(self, cdict):
+        ret = super(self.__class__,self).evaluate(cdict)
+        if ret is not None:
+            ret = unicode(ret)
+        return ret
+
+class SanitizedExpr(Expr):
+    def evaluate(self, cdict):
+        ret = super(self.__class__,self).evaluate(cdict)
+        if ret is not None:
+            ret = unicode(ret).translate(pathseptrans)
+        return ret
+
+class Format(Expr):
+    _sanitize = False
+
+    def _get_tree(self):
+        clocals = ast.Const(locals)
+        clocals.lineno = 1
+        clocals = ast.CallFunc(clocals, [], None, None)
+        clocals.lineno = 1
+        items = self._parse()
+        te = ast.Tuple([])
+        te.lineno = 1
+        ta = ast.Tuple([])
+        ta.lineno = 1
+        for item in items:
+            if isinstance(item, Expr):
+                item = ast.Const(item.evaluate)
+                item.lineno = 1
+                item = ast.CallFunc(item, [clocals])
+                item.lineno = 1
+                ta.nodes.append(item)
+                te.nodes.append(item)
+            else:
+                item = ast.Const(item)
+                item.lineno = 1
+                ta.nodes.append(item)
+        result = ast.Const(''.join)
+        result.lineno = 1
+        result = ast.CallFunc(result,[ta],None, None)
+        if te.nodes:
+            none = ast.Name('None')
+            none.lineno = 1
+            test = ast.Compare(none, [('in',te)])
+            test.lineno = 1
+            result = ast.IfExp(test, none, result)
+            result.lineno = 1
+        result = ast.Expression(result)
+        result.lineno = 1
+        result.filename = self._filename
+        return result
+
+    def _parse(self):
+        state = []
+        result = []
+        cur = []
+        prevend = 0
+        for m in breakre.finditer(self._source):
+    #        import pdb; pdb.set_trace()
+            mt = m.group(0)
+            mg = m.groupdict()
+            if m.start() > prevend:
+                cur.append(self._source[prevend:m.start()])
+            prevend = m.end()
+            if not state:
+                if mt == '$$':
+                    cur.append('$')
+                elif mt.startswith('$'):
+                    if not (mg['label'] or mg['paren']):
+                        cur.append(mt)
+                        continue
+                    if any(cur):
+                        result.append(''.join(cur))
+                        cur = []
+                    if not mg['paren']:
+                        if mg['nosan'] or not self._sanitize:
+                            result.append(StringExpr(mg['label'], self._filename, self._baseexpr))
+                        else:
+                            result.append(SanitizedExpr(mg['label'], self._filename, self._baseexpr))
+                    else:
+                        if mg['nosan'] or not self._sanitize:
+                            cur.append(StringExpr)
+                        else:
+                            cur.append(SanitizedExpr)
+                        if mg['label']:
+                            cur.append(mg['label'])
+                        cur.append('(')
+                        state.append('(')
                 else:
-                    item = re.sub(r'[]?[/\\=+<>:;",*|]','_',item.evaluate(cdict).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace'))
-            reslist.append(item)
-        return ''.join(reslist)
+                    cur.append(mt)
+            else:
+                cur.append(mt)
+                if state[-1] == '(':
+                    if mt == ')':
+                        state.pop()
+                    elif mg['quote']:
+                        state.append(mg['quote'])
+                    elif mt.endswith('('):
+                        state.append('(')
+                else:
+                    if mg['quote'] == state[-1]:
+                        state.pop()
+                if not state:
+                    result.append(cur[0](''.join(cur[1:]), self._filename, self._baseexpr))
+                    cur = []
+        cur.append(self._source[prevend:])
+        if state:
+            raise SyntaxError('unexpected EOF while parsing',(self._filename,1,len(self._source),self._source))
+        if any(cur):
+            result.append(''.join(cur))
+        return result
 
-class Expr(Value):
-    _cache = {}
-    def __new__(cls,items):
-        if isinstance(items, basestring):
-            if items not in cls._cache:
-                ret = Value.__new__(cls)
-                ret.parsedformat = expr.parseString(items)
-                cls._cache[items] = ret
-            return cls._cache[items]
-        elif isinstance(items,cls):
-            return items
-    def __init__(self,items):
-        pass
+class SanitizedFormat(Format):
+    _sanitize = True
+
+class FileFormat(SanitizedFormat):
+    _baseexpr = SanitizedFormat
     def evaluate(self, cdict):
-        return evaluate(self.parsedformat[0],cdict)
+        ret = super(self.__class__,self).evaluate(cdict)
+        if ret is not None:
+            ret = ret.translate(pathtrans).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'underscorereplace')
+        return ret
 
-def NumericValue(string):
-    if '.' in string:
-        return float(string)
-    else:
-        return int(string)
+#class Format(Expr):
 
-def nonefunc(s, loc, toks):
-    toks[0] = None
+def unique(testset, expr, evalexpr): pass
 
-doubquot = QuotedString('"','\\','\\')
-singquot = QuotedString("'",'\\','\\')
-quot = doubquot | singquot
-quot.setParseAction(lambda s,loc,toks: unicode(u''.join(toks)))
-spaces = Optional(Word(' \t\n').suppress())
-expr = Forward()
-number = Regex('([0-9]+(\.[0-9]*)?|(\.[0-9]+))')
-number.setParseAction(lambda s,loc,toks: NumericValue(toks[0]))
-truth = Keyword('True') | Keyword('False')
-truth.setParseAction(lambda s,loc,toks: toks[0] == 'True')
-none = Keyword('None')
-none.setParseAction(nonefunc)
-validname = Word(alphas,alphanums+'_')
-lookup = validname.copy()
-lookup.setParseAction(lambda s,loc,toks: LookupValue(u''.join(toks)))
-lparen = Literal('(').suppress()
-rparen = Literal(')').suppress()
-arglist = delimitedList(expr)
-funccall = validname + lparen + spaces + arglist + spaces + rparen
-funccall.setParseAction(lambda s,loc,toks: FuncValue(toks))
-parenexpr = lparen + spaces + expr + spaces + rparen
-tupleexpr = lparen + delimitedList(expr) + Optional(Literal(',').suppress()) + rparen
-tupleexpr.setParseAction(lambda s,loc,toks: TupleValue(toks))
-lbracket = Literal('[').suppress()
-rbracket = Literal(']').suppress()
-listexpr = lbracket + delimitedList(expr) + Optional(Literal(',').suppress()) + rbracket
-listexpr.setParseAction(lambda s,loc,toks: ListValue(toks))
-sumop = Literal('+') | Literal('-')
-atom =  Optional(sumop + spaces) + (truth | none | funccall | quot | lookup | number | parenexpr | tupleexpr | listexpr) + spaces
-atom.setParseAction(lambda s,loc,toks:UnaryOperatorValue(toks))
-productop = Literal('*') | Literal('/') | Literal('%')
-product = atom + ZeroOrMore(spaces + productop + spaces + atom)
-product.setParseAction(lambda s,loc,toks: ReductionValue(toks))
-sumop = Literal('+') | Literal('-')
-sum = product + ZeroOrMore(spaces + sumop + spaces + product)
-sum.setParseAction(lambda s,loc,toks: ReductionValue(toks))
-compareop = Literal('<=') | Literal('>=') | Literal('<') | Literal('>') | Literal('==') | Literal('!=')
-comparison = sum + ZeroOrMore(spaces + compareop + spaces + sum)
-comparison.setParseAction(lambda s,loc,toks: ReductionValue(toks))
-notexpr = Optional(Keyword('not') + spaces) + comparison
-notexpr.setParseAction(lambda s,loc,toks: UnaryOperatorValue(toks))
-andexpr = notexpr + ZeroOrMore(spaces + Keyword('and') + spaces + notexpr)
-andexpr.setParseAction(lambda s,loc,toks: BooleanReductionValue(toks))
-orexpr = andexpr + ZeroOrMore(spaces + Keyword('or') + spaces + andexpr)
-orexpr.setParseAction(lambda s,loc,toks: BooleanReductionValue(toks))
-expr << orexpr
-expr.leaveWhitespace()
-subsint = Literal('$').suppress()
-funcsubs = subsint + funccall
-asissubs = subsint + Literal('/').suppress() + lparen + spaces + expr + spaces + rparen
-asissubs.setParseAction(lambda s,loc,toks: AsIs(toks))
-looksubs = subsint + lookup + WordEnd(alphanums + '_')
-exprsubs = subsint + parenexpr
-subs = exprsubs | asissubs | funcsubs | looksubs
-subs.setParseAction(lambda s,loc,toks: SubsValue(toks[0]))
-literal = Combine(OneOrMore(CharsNotIn('$')|(subsint+Literal('$'))))
-formatexpr = OneOrMore(subs|literal)
-formatexpr.leaveWhitespace()
-__all__ = ['Format','Expr','evaluate']
+__all__ = ['Format','FileFormat','Expr','evaluate']

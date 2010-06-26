@@ -79,22 +79,26 @@ Config = AMConfig(
    (
       ('defaults',
          ('groupby',
-            "musicbrainz_albumid and ('album',musicbrainz_albumid) or "
-            "album and (albumartist or artist) and "
-            "('meta',albumartist or artist,album,catalognumber or asin or isrc)"
-            " or ('dir',dir)"
+            "first("
+                "('album',musicbrainz_albumid),"
+                "('meta',first(albumartist,artist),album,first(catalognumber,asin,isrc)),"
+                "('dir',dir)"
+            ")"
          ),
          ('trackid',
-            "musicbrainz_albumid and musicip_puid and ('mbid',musicip_puid,musicbrainz_albumid,tracknumber) or "
-            "('meta',title,artist,album,year,catalognumber or asin or isrc,tracknumber)"
+            "first("
+                "('mbid',musicip_puid,musicbrainz_albumid,first(tracknumber)),"
+                "('meta',title,artist,album,first(year),first(catalognumber,asin,isrc),first(tracknumber))"
+            ")"
          ),
-         ('sortby', "(discnumber,tracknumber,filename)"),
+         ('sortby', "(first(discnumber),first(tracknumber),first(filename))"),
          ('base', '.'),
          ('filename',
-            "$/(type and '%s/'%type)$firstof(releasetype == 'soundtrack' and "
-            "'Soundtrack',albumartist,artist)/$(album)/"
-            "$if(discnumber > 0,'%02d.' % discnumber)$('%02d' % tracknumber)"
-            " $title$if(ext,'.%s'%ext)"
+            "$/first('$type/','')"
+            "$first(releasetype == 'soundtrack' and 'Soundtrack', albumartist, artist)/$album/"
+            "$first('%02d.' % discnumber if discnumber > 0 else '','')"
+            "$first('%02d ' % tracknumber, '')"
+            "$title$first('.%s' % ext, '')"
          ),
          ('fs_encoding', 'utf8'),
          ('fs_encoding_error', 'replace'),
