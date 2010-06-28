@@ -9,7 +9,7 @@
 import os.path
 from mutagen import FileType
 from mutagen.asf import ASF
-from mutagen.flac import FLAC
+from mutagen.flac import FLAC, SeekPoint, CueSheetTrackIndex
 from mutagen.monkeysaudio import MonkeysAudio
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
@@ -64,6 +64,11 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
 
 def has_replaygain(self):
     return reduce(lambda x,y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
+
+_newargs_untuplize = lambda self: super(self.__class__, self).__getnewargs__[0]
+
+SeekPoint.__getnewargs__ = _newargs_untuplize
+CueSheetTrackIndex.__getnewargs__ = _newargs_untuplize
 
 FileType.format = format
 FileType.meta = property(_get_meta,_set_meta)

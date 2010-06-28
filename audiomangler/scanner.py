@@ -52,7 +52,7 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     dircache = {}
     if shelve:
         try:
-            dircache = shelve.open(cachefile)
+            dircache = shelve.open(cachefile,-1)
         except Exception:
             pass
     if dircache.get('//version',None) != db_version:
