@@ -240,7 +240,7 @@ class FileFormat(SanitizedFormat):
     def evaluate(self, cdict):
         ret = super(self.__class__,self).evaluate(cdict)
         if ret is not None:
-            ret = ret.translate(pathtrans).encode(Config['fs_encoding'],Config['fs_encoding_err'] or 'underscorereplace')
+            ret = ret.translate(pathtrans)
         return ret
 
 #class Format(Expr):

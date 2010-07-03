@@ -8,27 +8,27 @@
 ###########################################################################
 import os
 import sys
-from subprocess import Popen, CalledProcessError
-from threading import Thread, RLock
+import atexit
 from types import FunctionType, GeneratorType
-threadpool = None
+from twisted.internet import threads, defer
+from twisted.python import failure
 
-def synchronized(*locks):
-    def decorator(func):
-        def proxy(self, *args, **kw):
-            for lock in locks:
-                lock = getattr(self,lock,None)
-                if lock is not None:
-                    lock.acquire()
-            try:
-                return func(self, *args, **kw)
-            finally:
-                for lock in locks:
-                    lock = getattr(self,lock,None)
-                    if lock is not None:
-                        lock.release()
-        return proxy
-    return decorator
+if 'twisted.internet.reactor' not in sys.modules:
+    for reactor in ('kqreactor','epollreactor','pollreactor','selectreactor'):
+        try:
+            r = __import__('twisted.internet.' + reactor, fromlist=[reactor])
+            r.install()
+            break
+        except ImportError: pass
+
+from twisted.internet import reactor
+
+def cleanup():
+    if reactor.running: reactor.stop()
+
+atexit.register(cleanup)
+
+threadpool = None
 
 class Clear(object):
     def __new__(cls,*args,**kw):
@@ -45,54 +45,26 @@ class BaseTask(object):
     def run(self):
         self.started = True
         if self.background:
-            self.runbg()
-            return self
+            return self.runbg()
         else:
-            self.runfg()
+            return self.runfg()
 
 class FuncTask(BaseTask):
     def __init__(self, target=None, args=(), kwargs=(), background=True):
-        self._lock = RLock()
         BaseTask.__init__(self, target, args, kwargs, background)
 
-    run = synchronized('_lock')(BaseTask.run)
-
     def runfg(self):
-        self.target(*self.args, **self.kwargs)
-
-    @synchronized('_lock')
-    def runbg(self):
-        self.thread = Thread(target=self.runsaveexc)
-        self.thread.start()
-
-    def runsaveexc(self):
         try:
-            self.runfg()
-        except Exception:
-            self.exc_info = sys.exc_info()
+            self.target(*self.args, **self.kwargs)
+            self.deferred =  defer.succeed(self)
+            return self.deferred
+        except:
+            self.deferred = defer.failure(failure.Failure())
+            return self.deferred
 
-    @synchronized('_lock')
-    def wait(self):
-        if not self.started:
-            return False
-        elif not hasattr(self,'thread'):
-            return False
-        self.thread.join()
-        if hasattr(self, 'exc_info'):
-            sys.excepthook(*exc_info)
-        return True
-
-    @synchronized('_lock')
-    def poll(self):
-        if not self.started:
-            return False
-        elif not hasattr(self,'thread'):
-            return False
-        elif self.thread.isAlive():
-            return False
-        elif hasattr(self, 'exc_info'):
-            sys.excepthook(*(self.exc_info))
-        return True
+    def runbg(self):
+        self.deferred = threads.deferToThread(self.target, *self.args, **self.kwargs)
+        return self.deferred
 
 class CLITask(BaseTask):
     def __init__(self, target=None, args=(), stdin=None, stdout=None, stderr=None, kwargs=(), background=True):
@@ -165,4 +137,4 @@ class TaskSet(FuncTask):
                 self.clear()
         self.clear()
 
-__all__ = ['FuncTask','CLITask','TaskSet']
+__all__ = ['FuncTask','CLITask','TaskSet','reactor']

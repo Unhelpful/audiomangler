@@ -64,7 +64,7 @@ class AMConfig(RawConfigParser):
             if not source:
                 continue
             try:
-                ret = self.get(source,key)
+                ret = RawConfigParser.get(self,source,key)
             except (NoOptionError, NoSectionError):
                 continue
             else:
@@ -72,12 +72,18 @@ class AMConfig(RawConfigParser):
                 return ret
         self._cache[key] = None
 
+    def get(self, key, default=None):
+        ret = self[key]
+        return ret if ret is not None else default
+        
+
     for n in ('read','readfp','remove_option','remove_section','set'):
         locals()[n] = clear_cache(getattr(RawConfigParser,n))
 
 Config = AMConfig(
    (
       ('defaults',
+         ('onsplit', 'abort'),
          ('groupby',
             "first("
                 "('album',musicbrainz_albumid),"
@@ -85,6 +91,8 @@ Config = AMConfig(
                 "('dir',dir)"
             ")"
          ),
+         ('loglevel','INFO'),
+         ('consolelevel','INFO'),
          ('trackid',
             "first("
                 "('mbid',musicip_puid,musicbrainz_albumid,first(tracknumber)),"

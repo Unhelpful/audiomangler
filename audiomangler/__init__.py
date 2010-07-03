@@ -7,18 +7,22 @@
 #
 ###########################################################################
 from mutagen import File
-from audiomangler import util
 from audiomangler.config import *
+from audiomangler.logging import *
+from audiomangler import util
+from audiomangler.task import *
 from audiomangler.expression import *
 from audiomangler.tag import *
 from audiomangler.scanner import *
-from audiomangler.task import *
 from audiomangler.codecs import *
 from audiomangler import mutagenext
 from audiomangler.cli import *
+
+
 __all__ = [
     'File',
     'Format',
+    'FileFormat'
     'Expr',
     'Evaluate',
     'NormMetaData',

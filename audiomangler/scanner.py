@@ -161,7 +161,7 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     for t in tracks:
         t.sortkey = t.meta.evaluate(sortby)
         albums.setdefault(t.meta.evaluate(groupby),[]).append(t)
-        dirs.setdefault(t.meta['dir'],[]).append(t)
+        dirs.setdefault(os.path.split(t.filename)[0],[]).append(t)
         t.tid = t.meta.evaluate(trackid)
         if t.tid in trackids:
             print "trackid collision"
