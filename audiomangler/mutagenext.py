@@ -19,7 +19,7 @@ from mutagen.wavpack import WavPack
 from mutagen.trueaudio import TrueAudio
 from mutagen.optimfrog import OptimFROG
 from mutagen.musepack import Musepack
-from audiomangler import NormMetaData, from_config, Format, Config
+from audiomangler import NormMetaData, from_config, FileFormat, Config
 
 def _get_meta(self):
     metacache = getattr(self,'_meta_cache',(False,False))
@@ -59,13 +59,13 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
     meta = NormMetaData(preadd)
     meta.update(self.meta.flat())
     meta.update(postadd)
-    filename = Format(filename)
+    filename = FileFormat(filename)
     return os.path.join(base,filename.evaluate(meta))
 
 def has_replaygain(self):
     return reduce(lambda x,y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
 
-_newargs_untuplize = lambda self: super(self.__class__, self).__getnewargs__[0]
+_newargs_untuplize = lambda self: super(self.__class__, self).__getnewargs__()[0]
 
 SeekPoint.__getnewargs__ = _newargs_untuplize
 CueSheetTrackIndex.__getnewargs__ = _newargs_untuplize
