@@ -7,14 +7,26 @@
 #
 ###########################################################################
 import os, stat
-from audiomangler import Config, msg, err, fatal, WARNING, ERROR
+from audiomangler.config import Config
+from audiomangler.logging import msg, err, fatal, WARNING, ERROR
 
-def copy(src,dst):
+class ClassInitMeta(type):
+    def __new__(cls, name, bases, cls_dict):
+        class_init = cls_dict.get('__classinit__', None)
+        if class_init:
+            cls_dict['__classinit__'] = staticmethod(class_init)
+        return super(ClassInitMeta, cls).__new__(cls, name, bases, cls_dict)
+
+    def __init__(self, name, bases, cls_dict):
+        if callable(getattr(self, '__classinit__', None)):
+            self.__classinit__(self, name, bases, cls_dict)
+
+def copy(src, dst):
     fsrc = None
     fdst = None
     try:
-        fsrc = open(src,'rb')
-        fdst = open(dst,'wb')
+        fsrc = open(src, 'rb')
+        fdst = open(dst, 'wb')
         while 1:
             buf = fsrc.read(16384)
             if not buf:
@@ -33,25 +45,25 @@ def copy(src,dst):
         except OSError:
             pass
 
-def move(src,dst):
+def move(src, dst):
     try:
-        os.rename(src,dst)
+        os.rename(src, dst)
     except OSError:
-        copy(src,dst)
+        copy(src, dst)
         os.unlink(src)
 
-def test_splits(dir_list,transcode=False):
+def test_splits(dir_list, transcode=False):
     from audiomangler import get_codec
     if transcode and Config['type']:
         targetcodec = Config['type']
-        if ',' in targetcodec:
+        if ', ' in targetcodec:
             allowedcodecs = targetcodec.split(',')
             targetcodec = allowedcodecs[0]
             allowedcodecs = frozenset(allowedcodecs)
         else:
             allowedcodecs = frozenset((targetcodec,))
         targetcodec = get_codec(targetcodec)
-        postadd = lambda type_: {} if type_ in allowedcodecs else {'type':targetcodec.type_,'ext':targetcodec.ext}
+        postadd = lambda type_: {} if type_ in allowedcodecs else {'type':targetcodec.type_, 'ext':targetcodec.ext}
     else:
         postadd = lambda type_: {}
     for (dir_, files) in dir_list.items():
@@ -65,12 +77,12 @@ def test_splits(dir_list,transcode=False):
             onsplit = Config['onsplit']
             if onsplit == 'abort':
                 fatal(consoleformat=u"tracks in %(dir_p)s would be placed in different target directories, aborting\nset onsplit to 'warn' or 'ignore' to proceed anyway",
-                    format="split: %(dir_)r", dir_=dir_, dir_p=fsdecode(dir_),nologerror=1)
+                    format="split: %(dir_)r", dir_=dir_, dir_p=fsdecode(dir_), nologerror=1)
 
 def fsencode(string):
-    return string.encode(Config['fs_encoding'],Config.get('fs_encoding_err','underscorereplace'))
+    return string.encode(Config['fs_encoding'], Config.get('fs_encoding_err', 'underscorereplace'))
 
 def fsdecode(string):
-    return string.decode(Config['fs_encoding'],Config.get('fs_encoding_err','replace'))
+    return string.decode(Config['fs_encoding'], Config.get('fs_encoding_err', 'replace'))
 
-__all__ = ['copy','move','fsencode','fsdecode','test_splits']
+__all__ = ['copy', 'move', 'fsencode', 'fsdecode', 'test_splits']

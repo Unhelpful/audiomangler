@@ -12,15 +12,15 @@ from mutagen.apev2 import APEv2
 from mutagen import id3
 import re
 from operator import and_
-from audiomangler import evaluate
+from audiomangler.expression import evaluate
 
 def splitnumber(num, label):
-    if isinstance(num, (list,tuple)):
+    if isinstance(num, (list, tuple)):
         num = num[0]
     if not num:
         num = ''
-    num = re.search(r'^(\d*)(?:/(\d*))?',num)
-    num = num and num.groups() or [0,0]
+    num = re.search(r'^(\d*)(?:/(\d*))?', num)
+    num = num and num.groups() or [0, 0]
     try:
         index = int(num[0])
     except:
@@ -38,15 +38,15 @@ def splitnumber(num, label):
 
 def joinnumber(input, label, outlabel = None):
     try:
-        index = input.get(label+'number',0)
-        if isinstance(index,(list,tuple)):
+        index = input.get(label+'number', 0)
+        if isinstance(index, (list, tuple)):
             index = index[0]
         index = int(index)
     except ValueError:
         index = 0
     try:
-        total = input.get('total'+label+'s',0)
-        if isinstance(total,(list,tuple)):
+        total = input.get('total'+label+'s', 0)
+        if isinstance(total, (list, tuple)):
             total = total[0]
         total = int(total)
     except ValueError:
@@ -58,7 +58,7 @@ def joinnumber(input, label, outlabel = None):
             index = index + '/' + str(total)
         if outlabel is None:
             outlabel = label
-        ret.append((outlabel,index))
+        ret.append((outlabel, index))
     return ret
 
 def id3tiplin(i, o, k, v):
@@ -71,14 +71,14 @@ def id3tiplin(i, o, k, v):
     }
     for key, value in v.people:
         if key in pmap:
-            o.setdefault(pmap[key],[]).append(value)
+            o.setdefault(pmap[key], []).append(value)
 
 def id3usltin(i, o, k, v):
     text = u'\n'.join(v.text.splitlines())
-    return [('lyrics',[text])]
+    return [('lyrics', [text])]
 
 def id3ufidin(i, o, k, v):
-    return (('musicbrainz_trackid',[v.data]),)
+    return (('musicbrainz_trackid', [v.data]), )
 
 def id3tiplout(i, o, k, v):
     pmap = {
@@ -91,8 +91,8 @@ def id3tiplout(i, o, k, v):
     if k not in pmap:
         return
     k = pmap[k]
-    t = o.setdefault('TIPL',[])
-    t.extend(zip([k]*len(v),v))
+    t = o.setdefault('TIPL', [])
+    t.extend(zip([k]*len(v), v))
 
 def id3rva2in(i, o, k, v):
     if v.channel != 1:
@@ -106,8 +106,8 @@ def id3rva2in(i, o, k, v):
         target = 'track'
     elif v.desc.lower() == 'album':
         target = 'album'
-    o['_'.join(('replaygain',target,'gain'))] = "%.3f dB" % v.gain
-    o['_'.join(('replaygain',target,'peak'))] = "%.8f" % v.peak
+    o['_'.join(('replaygain', target, 'gain'))] = "%.3f dB" % v.gain
+    o['_'.join(('replaygain', target, 'peak'))] = "%.8f" % v.peak
 
 def id3rva2out(i, o, k, v):
     if 'track' in k:
@@ -115,15 +115,15 @@ def id3rva2out(i, o, k, v):
     elif 'album' in k:
         target = 'album'
     try:
-        gain = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain',target,'gain')),'0.0')).group(0))
+        gain = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain', target, 'gain')), '0.0')).group(0))
     except Exception:
         gain = 0.0
     try:
-        peak = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain',target,'peak')),'0.0')).group(0))
+        peak = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain', target, 'peak')), '0.0')).group(0))
         peak = abs(peak)
     except Exception:
         peak = 0.0
-    o[':'.join(('RVA2',target))] = id3.RVA2(desc=target,peak=peak,gain=gain,channel=1)
+    o[':'.join(('RVA2', target))] = id3.RVA2(desc=target, peak=peak, gain=gain, channel=1)
 
 id3_encodings=(
     'iso-8859-1',
@@ -136,36 +136,36 @@ def best_encoding(txt):
     r = []
     for n in range(4):
         try:
-            r.append((len(txt.encode(id3_encodings[n])),n))
+            r.append((len(txt.encode(id3_encodings[n])), n))
         except UnicodeError:
             pass
     r.sort()
     return r[0][1]
 
-def id3itemout(k,v):
+def id3itemout(k, v):
     if isinstance(v, id3.Frame):
-        return k,v
+        return k, v
     fid = k[:4]
     if fid.startswith('T'):
-        if isinstance(v,basestring):
+        if isinstance(v, basestring):
             v = [v]
         if fid == 'TIPL':
-            enc = best_encoding(u'\0'.join(reduce(lambda x,y: x+y, v)))
+            enc = best_encoding(u'\0'.join(reduce(lambda x, y: x+y, v)))
         else:
             enc = best_encoding(u'\0'.join(v))
         if fid == 'TXXX':
-            return k,id3.TXXX(encoding=enc,desc=k.split(':',1)[1],text=v)
+            return k, id3.TXXX(encoding=enc, desc=k.split(':', 1)[1], text=v)
         else:
-            return k,getattr(id3,fid)(encoding=enc,text=v)
+            return k, getattr(id3, fid)(encoding=enc, text=v)
     elif fid == 'USLT':
-        if isinstance(v, (list,tuple)):
+        if isinstance(v, (list, tuple)):
             v = v[0]
         enc = best_encoding(v)
-        return "USLT::'und'",id3.USLT(encoding=enc,text=v,lang='und')
+        return "USLT::'und'", id3.USLT(encoding=enc, text=v, lang='und')
     elif k == 'UFID:http://musicbrainz.org':
-        if isinstance(v, (list,tuple)):
+        if isinstance(v, (list, tuple)):
             v = v[0]
-        return k,id3.UFID(owner='http://musicbrainz.org',data=v)
+        return k, id3.UFID(owner='http://musicbrainz.org', data=v)
 tagmap = {
     APEv2:{
         'keysasis':(
@@ -223,8 +223,8 @@ tagmap = {
                 'mixartist':'remixer',
                 'musicbrainz_albumstatus':'releasestatus',
                 'musicbrainz_albumtype':'releasetype',
-                'track': lambda i,o,k,v: splitnumber(v.value,'track'),
-                'disc': lambda i,o,k,v: splitnumber(v.value,'disc'),
+                'track': lambda i, o, k, v: splitnumber(v.value, 'track'),
+                'disc': lambda i, o, k, v: splitnumber(v.value, 'disc'),
             }
         },
         'out':{
@@ -255,16 +255,16 @@ tagmap = {
                 'replaygain_album_peak':'replaygain_album_peak',
                 'replaygain_track_gain':'replaygain_track_gain',
                 'replaygain_track_peak':'replaygain_track_peak',
-            }.get(k,None) or k.title(),
-            'valuetrans': lambda v: isinstance(v,(tuple,list)) and u'\0'.join(v) or v,
+            }.get(k, None) or k.title(),
+            'valuetrans': lambda v: isinstance(v, (tuple, list)) and u'\0'.join(v) or v,
             'keymap': {
                 'albumartist':'album artist',
                 'releasestatus':'MUSICBRAINZ_ALBUMSTATUS',
                 'releasetype':'MUSICBRAINZ_ALBUMTYPE',
                 'date':'Year',
                 'remixer':'mixartist',
-                'tracknumber': lambda i,o,k,v: joinnumber(i,'track'),
-                'discnumber': lambda i,o,k,v: joinnumber(i,'disc'),
+                'tracknumber': lambda i, o, k, v: joinnumber(i, 'track'),
+                'discnumber': lambda i, o, k, v: joinnumber(i, 'disc'),
             }
         }
 
@@ -324,24 +324,24 @@ tagmap = {
             'keymap': {
                 'musicbrainz_albumstatus':'releasestatus',
                 'musicbrainz_albumtype':'releasetype',
-                'tracknumber': lambda i,o,k,v: splitnumber(v,'track'),
-                'discnumber': lambda i,o,k,v: splitnumber(v,'disc'),
+                'tracknumber': lambda i, o, k, v: splitnumber(v, 'track'),
+                'discnumber': lambda i, o, k, v: splitnumber(v, 'disc'),
             }
         },
         'out':{
             'keytrans': lambda k: k.upper(),
-            'valuetrans': lambda v: isinstance(v,basestring) and [v] or v,
+            'valuetrans': lambda v: isinstance(v, basestring) and [v] or v,
             'keymap': {
                 'releasestatus':'MUSICBRAINZ_ALBUMSTATUS',
                 'releasetype':'MUSICBRAINZ_ALBUMTYPE',
-                'tracknumber': lambda i,o,k,v: joinnumber(i,'track','tracknumber'),
-                'discnumber': lambda i,o,k,v: joinnumber(i,'disc','discnumber'),
+                'tracknumber': lambda i, o, k, v: joinnumber(i, 'track', 'tracknumber'),
+                'discnumber': lambda i, o, k, v: joinnumber(i, 'disc', 'discnumber'),
             }
         }
     },
     ID3:{
         'in':{
-            'keytrans': lambda k: (k.startswith('TXXX') or k.startswith('UFID')) and k or k.split(':',1)[0],
+            'keytrans': lambda k: (k.startswith('TXXX') or k.startswith('UFID')) and k or k.split(':', 1)[0],
             'valuetrans': lambda v: [unicode(i) for i in v.text],
             'keymap': {
                 'TALB':'album',
@@ -357,8 +357,8 @@ tagmap = {
                 'TIT1':'grouping',
                 'TIT3':'subtitle',
                 'TSST':'discsubtitle',
-                'TRCK': lambda i,o,k,v: splitnumber(v.text,'track'),
-                'TPOS': lambda i,o,k,v: splitnumber(v.text,'disc'),
+                'TRCK': lambda i, o, k, v: splitnumber(v.text, 'track'),
+                'TPOS': lambda i, o, k, v: splitnumber(v.text, 'disc'),
                 'TCMP':'compilation',
                 'TCON':'genre',
                 'TBPM':'bpm',
@@ -409,8 +409,8 @@ tagmap = {
                 'grouping':'TIT1',
                 'subtitle':'TIT3',
                 'discsubtitle':'TSST',
-                'tracknumber': lambda i,o,k,v: joinnumber(i,'track','TRCK'),
-                'discnumber': lambda i,o,k,v: joinnumber(i,'disc','TPOS'),
+                'tracknumber': lambda i, o, k, v: joinnumber(i, 'track', 'TRCK'),
+                'discnumber': lambda i, o, k, v: joinnumber(i, 'disc', 'TPOS'),
                 'compilation':'TCMP',
                 'genre':'TCON',
                 'bmp':'TBPM',
@@ -458,14 +458,14 @@ class NormMetaData(dict):
     @classmethod
     def tagmapfor(cls, meta):
         global tagmap
-        for c in (type(meta),) + type(meta).__bases__:
+        for c in (type(meta), ) + type(meta).__bases__:
             if c in tagmap:
                 return tagmap[c]
         raise TypeError("No mapping specified for tag type %s"%type(meta))
 
     @classmethod
     def converted(cls, meta):
-        if hasattr(meta,'tags'):
+        if hasattr(meta, 'tags'):
             meta = meta.tags
         if isinstance(meta, cls):
             return cls(meta)
@@ -486,11 +486,11 @@ class NormMetaData(dict):
                             value = tagmap['in']['valuetrans'](value)
                         newmeta[keymap] = value
                     else:
-                        l = keymap(meta,newmeta,key,value)
+                        l = keymap(meta, newmeta, key, value)
                         if l is not None:
                             newmeta.update(l)
             for k in newmeta.keys():
-                if isinstance(newmeta[k],(list,tuple)):
+                if isinstance(newmeta[k], (list, tuple)):
                     newmeta[k] = [i for i in newmeta[k] if i]
                 if not newmeta[k]:
                     del newmeta[k]
@@ -502,18 +502,18 @@ class NormMetaData(dict):
         #we assume here that all items are numeric, a string, a list of
         #strings, or a list of associations.
         for key, value in self.iteritems():
-            if isinstance(value,(list,tuple)):
-                if not reduce(and_,(isinstance(i,basestring) for i in value)):
+            if isinstance(value, (list, tuple)):
+                if not reduce(and_, (isinstance(i, basestring) for i in value)):
                     value = (': '.join(i) for i in value)
                 value = u'; '.join(value)
             newmeta[key] = value
         #make sure the numeric members *always* have numeric values
-        for k in ('tracknumber','totaltracks','discnumber','totaldiscs'):
-            newmeta.setdefault(k,0)
+        for k in ('tracknumber', 'totaltracks', 'discnumber', 'totaldiscs'):
+            newmeta.setdefault(k, 0)
         return newmeta
 
-    def evaluate(self, expr,d = None):
-        return evaluate(expr,self.flat(d))
+    def evaluate(self, expr, d = None):
+        return evaluate(expr, self.flat(d))
 
     def apply(self, target, clear=False):
         if target.tags is None:
@@ -530,7 +530,7 @@ class NormMetaData(dict):
                 if isinstance(keymap, basestring):
                     newmeta[keymap] = value
                 else:
-                    l = keymap(self,newmeta,key,value)
+                    l = keymap(self, newmeta, key, value)
                     if l is not None:
                         newmeta.update(l)
         itemtrans = None
@@ -539,9 +539,9 @@ class NormMetaData(dict):
         elif 'keytrans' in tagmap['out'] or 'valuetrans' in tagmap['out']:
             keytrans = 'keytrans' in tagmap['out'] and tagmap['out']['keytrans'] or (lambda x: x)
             valuetrans = 'valuetrans' in tagmap['out'] and tagmap['out']['valuetrans'] or (lambda x: x)
-            itemtrans = lambda k,v: (keytrans(k),valuetrans(v))
+            itemtrans = lambda k, v: (keytrans(k), valuetrans(v))
         if itemtrans:
-            target.tags.update(itemtrans(k,v) for k,v in newmeta.items())
+            target.tags.update(itemtrans(k, v) for k, v in newmeta.items())
         else:
             print newmeta
             target.tags.update(newmeta)

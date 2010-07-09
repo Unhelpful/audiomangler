@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from twisted.python import log, failure
-from audiomangler import Config
+from audiomangler.config import Config
 import os, sys, atexit
 
 try:
@@ -20,16 +20,17 @@ class FilteredFileLogObserver(log.FileLogObserver):
         self.loglevel = loglevel
 
     def emit(self, eventDict):
-        if eventDict.get('loglevel',DEBUG) > self.loglevel:
+        if '_noignore' not in eventDict and not eventDict['isError']: return
+        if eventDict.get('loglevel', DEBUG) > self.loglevel:
             return
         encoding = sys.stdout.encoding
         if eventDict['isError'] and 'failure' in eventDict:
             text = log.textFromEventDict(eventDict)
         elif eventDict['message']:
-            text = ' '.join(s.encode(encoding,'replace') if isinstance(s,unicode) else s for s in eventDict['message'])
+            text = ' '.join(s.encode(encoding, 'replace') if isinstance(s, unicode) else s for s in eventDict['message'])
         elif 'format' in eventDict or 'consoleformat' in eventDict:
-            fmt = eventDict.get('format',eventDict.get('consoleformat'))
-            text = (fmt % eventDict).encode(encoding,'replace')
+            fmt = eventDict.get('format', eventDict.get('consoleformat'))
+            text = (fmt % eventDict).encode(encoding, 'replace')
         else:
             text = log.textFromEventDict(eventDict)
         timeStr = self.formatTime(eventDict['time'])
@@ -46,16 +47,17 @@ class FilteredConsoleLogObserver:
         log.removeObserver(self.emit)
 
     def emit(self, eventDict):
-        if eventDict.get('loglevel',DEBUG) > self.loglevel:
+        if '_noignore' not in eventDict and not eventDict['isError']: return
+        if eventDict.get('loglevel', DEBUG) > self.loglevel:
             return
         encoding = sys.stdout.encoding
         if eventDict['isError'] and 'failure' in eventDict:
             text = log.textFromEventDict(eventDict)
         elif eventDict['message']:
-            text = ''.join(s.encode(encoding,'replace') if isinstance(s,unicode) else s for s in eventDict['message'])
+            text = ''.join(s.encode(encoding, 'replace') if isinstance(s, unicode) else s for s in eventDict['message'])
         elif 'format' in eventDict or 'consoleformat' in eventDict:
-            fmt = eventDict.get('consoleformat',eventDict.get('format'))
-            text = (fmt % eventDict).encode(encoding,'replace')
+            fmt = eventDict.get('consoleformat', eventDict.get('format'))
+            text = (fmt % eventDict).encode(encoding, 'replace')
         else:
             text = log.textFromEventDict(eventDict)
         sys.stdout.write(text + '\n')
@@ -85,27 +87,27 @@ def err(*msg, **kwargs):
             except: pass
         if logfile is None:
             try:
-                logfile = FilteredFileLogObserver(open(Config.get('logfile','audiomangler-%d.log' % os.getpid()), 'wb'), get_level(Config['loglevel']))
+                logfile = FilteredFileLogObserver(open(Config.get('logfile', 'audiomangler-%d.log' % os.getpid()), 'wb'), get_level(Config['loglevel']))
                 logfile.start()
             except: pass
     kwargs['loglevel'] = ERROR
-    if msg and isinstance(msg[0],(failure.Failure,Exception)):
-        log.err(*msg, **kwargs)
+    if msg and isinstance(msg[0], (failure.Failure, Exception)):
+        log.err(_noignore=1, *msg, **kwargs)
     else:
-        log.msg(*msg, **kwargs)
+        log.msg(_noignore=1, *msg, **kwargs)
 
 def msg(*msg, **kwargs):
     global logfile
-    kwargs.setdefault('loglevel',DEBUG)
+    kwargs.setdefault('loglevel', DEBUG)
     if kwargs['loglevel'] == ERROR:
-        err(*msg, **kwargs)
+        err(_noignore=1, *msg, **kwargs)
     else:
         if Config['logfile'] and logfile is None and kwargs['loglevel'] <= get_level(Config['loglevel']):
             try:
                 logfile = FilteredFileLogObserver(open(Config['logfile'], 'wb'), Config['loglevel'])
                 logfile.start()
             except: pass
-        log.msg(*msg, **kwargs)
+        log.msg(_noignore=1, *msg, **kwargs)
 
 def fatal(*msg, **kwargs):
     err(*msg, **kwargs)
@@ -140,4 +142,4 @@ except:
 
 atexit.register(cleanup)
 
-__all__ = ['err','msg','fatal','ERROR','WARNING','INFO','DEBUG']
+__all__ = ['err', 'msg', 'fatal', 'ERROR', 'WARNING', 'INFO', 'DEBUG']

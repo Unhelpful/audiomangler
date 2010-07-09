@@ -18,23 +18,19 @@ from tempfile import mkdtemp
 from threading import BoundedSemaphore, RLock
 from subprocess import Popen, PIPE
 from mutagen import FileType
-from audiomangler import Config, from_config, FuncTask, CLITask, TaskSet, Expr, Format, File, util, NormMetaData
-
-class CodecMeta(type):
-    def __new__(cls, name, bases, cls_dict):
-        class_init = cls_dict.get('__classinit__',None)
-        if class_init:
-            cls_dict['__classinit__'] = staticmethod(class_init)
-        return super(CodecMeta,cls).__new__(cls, name, bases, cls_dict)
-
-    def __init__(self, name, bases, cls_dict):
-        if callable(getattr(self,'__classinit__',None)):
-            self.__classinit__(self, name, bases, cls_dict)
+from audiomangler.config import Config, from_config
+from audiomangler.tag import NormMetaData
+from audiomangler.task import CLIPipelineTask, CLITask, generator_task
+from audiomangler.expression import Expr, Format, FileFormat
+from audiomangler import util
+from audiomangler.util import ClassInitMeta
+from mutagen import File
+from functools import wraps
 
 codec_map = {}
 
 class Codec(object):
-    __metaclass__ = CodecMeta
+    __metaclass__ = ClassInitMeta
 
     _from_wav_multi = False
     _from_wav_pipe = False
@@ -111,23 +107,28 @@ class Codec(object):
         return CLITask(args=args,stdin='/dev/null',stdout=stdout,stderr=sys.stderr,background=False)
 
     @classmethod
+    @generator_task
     def add_replaygain(cls,files,metas=None):
-        if metas and hasattr(cls, 'calc_replaygain'):
-            tracks, album = cls.calc_replaygain(files)
+        env = {
+            'replaygain':cls.replaygain,
+            'files':tuple(files)
+        }
+        if metas and hasattr(cls, '_calc_replaygain_cmd'):
+            task = CLITask(*cls._calc_replaygain_cmd.evaluate(env))
+            output = yield task
+            tracks, album = cls.calc_replaygain(output)
             if tracks:
                 for meta,track in zip(metas,tracks):
                     meta.update(track)
                     meta.update(album)
-            return metas
+            yield metas
         elif hasattr(cls,'_replaygain_cmd'):
-            env = {
-            'replaygain':cls.replaygain,
-            'files':tuple(files)
-            }
-            args = cls._replaygain_cmd.evaluate(env)
-            CLITask(args=args,stdin='/dev/null',background=False).run()
+            task = CLITask(*cls._replaygain_cmd.evaluate(env))
+            yield task
         elif hasattr(cls,'calc_replaygain'):
-            tracks, album = cls.calc_replaygain(files)
+            task = CLITask(*cls._calc_replaygain_cmd.evaluate(env))
+            output = yield task
+            tracks, album = cls.calc_replaygain(output)
             for trackfile,trackgain in zip(files,tracks):
                 f = File(trackfile)
                 m = NormMetaData(trackgain + album)
@@ -143,15 +144,13 @@ class MP3Codec(Codec):
     _from_wav_multi = True
     _replaygain = True
     _from_wav_multi_cmd = Expr("(encoder,'--quiet')+encopts+('--noreplaygain','--nogapout',indir,'--nogaptags','--nogap')+infiles")
+    _calc_replaygain_cmd = Expr("(replaygain,'-q','-o','-s','s')+files")
 
-    @classmethod
-    def calc_replaygain(cls,files):
-        tracks = []
-        args = [cls.replaygain,'-q','-o','-s','s']
-        args.extend(files)
-        p = Popen(args=args, stdout=PIPE, stderr=PIPE)
-        (out, err) = p.communicate()
+    @staticmethod
+    def calc_replaygain(out):
+        (out, err) = out
         out = [l.split('\t')[2:4] for l in out.splitlines()[1:]]
+        tracks = []
         for i in out[:-1]:
             gain = ' '.join((i[0],'dB'))
             peak = '%.8f'% (float(i[1]) / 32768)

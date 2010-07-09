@@ -19,10 +19,12 @@ from mutagen.wavpack import WavPack
 from mutagen.trueaudio import TrueAudio
 from mutagen.optimfrog import OptimFROG
 from mutagen.musepack import Musepack
-from audiomangler import NormMetaData, from_config, FileFormat, Config
+from audiomangler.config import Config, from_config
+from audiomangler.tag import NormMetaData
+from audiomangler.expression import FileFormat
 
 def _get_meta(self):
-    metacache = getattr(self,'_meta_cache',(False,False))
+    metacache = getattr(self, '_meta_cache', (False, False))
     if metacache[0] is not getattr(self, 'filename', None) or metacache[1] \
        is not getattr(self, 'tags', None):
         self._meta_cache = (getattr(self, 'filename', None),
@@ -31,17 +33,17 @@ def _get_meta(self):
             meta = NormMetaData()
         else:
             meta = NormMetaData.converted(self)
-        path = getattr(self,'filename',None)
+        path = getattr(self, 'filename', None)
         if isinstance(path, basestring):
-            (meta['dir'], meta['name']) = (s.decode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace') for s in os.path.split(path))
-            meta['path'] = path.decode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace')
+            (meta['dir'], meta['name']) = (s.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace') for s in os.path.split(path))
+            meta['path'] = path.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace')
             meta['basename'] = os.path.splitext(meta['name'])[0]
-        relpath = getattr(self,'relpath',None)
-        if isinstance(relpath,basestring):
-            meta['relpath'] = relpath.decode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace')
-        reldir = getattr(self,'reldir',None)
-        if isinstance(reldir,basestring):
-            meta['reldir'] = reldir.decode(Config['fs_encoding'],Config['fs_encoding_err'] or 'replace')
+        relpath = getattr(self, 'relpath', None)
+        if isinstance(relpath, basestring):
+            meta['relpath'] = relpath.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace')
+        reldir = getattr(self, 'reldir', None)
+        if isinstance(reldir, basestring):
+            meta['reldir'] = reldir.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace')
         ext = getattr(self, 'ext', None)
         if ext is not None:
             meta['ext'] = ext
@@ -51,8 +53,8 @@ def _get_meta(self):
         self._meta = meta
     return self._meta
 
-def _set_meta(self,value):
-    NormMetaData.converted(value).apply(self,True)
+def _set_meta(self, value):
+    NormMetaData.converted(value).apply(self, True)
 
 def format(self, filename=None, base=None, preadd={}, postadd={}):
     filename, base = from_config('filename', 'base')
@@ -60,10 +62,10 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
     meta.update(self.meta.flat())
     meta.update(postadd)
     filename = FileFormat(filename)
-    return os.path.join(base,filename.evaluate(meta))
+    return os.path.join(base, filename.evaluate(meta))
 
 def has_replaygain(self):
-    return reduce(lambda x,y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
+    return reduce(lambda x, y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
 
 _newargs_untuplize = lambda self: super(self.__class__, self).__getnewargs__()[0]
 
@@ -71,7 +73,7 @@ SeekPoint.__getnewargs__ = _newargs_untuplize
 CueSheetTrackIndex.__getnewargs__ = _newargs_untuplize
 
 FileType.format = format
-FileType.meta = property(_get_meta,_set_meta)
+FileType.meta = property(_get_meta, _set_meta)
 FileType.lossless = False
 FileType.has_replaygain = has_replaygain
 

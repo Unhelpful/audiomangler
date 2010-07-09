@@ -12,7 +12,9 @@ try:
     import shelve
 except ImportError:
     shelve = None
-from audiomangler import from_config, NormMetaData, Expr
+from audiomangler.config import from_config
+from audiomangler.expression import Expr
+from audiomangler.tag import NormMetaData
 from mutagen import File
 from mutagen import version as mutagen_version
 import time

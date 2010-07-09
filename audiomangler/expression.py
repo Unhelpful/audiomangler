@@ -16,7 +16,7 @@ from RestrictedPython.MutatingWalker import walk
 from RestrictedPython.Guards import safe_builtins as eval_builtins
 from string import maketrans
 from compiler import ast
-from audiomangler import Config
+from audiomangler.config import Config
 
 breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
 pathseptrans = unicode(maketrans('/','_')[:48])
