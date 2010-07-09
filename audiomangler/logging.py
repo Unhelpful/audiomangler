@@ -9,8 +9,8 @@ except ImportError:
     from StringIO import StringIO
 
 loglevels = dict(ERROR=0, WARNING=1, INFO=2, DEBUG=3)
-locals().update(loglevels)
 loglevels.update(map(reversed, loglevels.items()))
+ERROR, WARNING, INFO, DEBUG = range(4)
 
 class FilteredFileLogObserver(log.FileLogObserver):
     def __init__(self, f, loglevel=INFO):

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
@@ -13,13 +13,11 @@ from audiomangler.logging import msg, err, fatal, WARNING, ERROR
 class ClassInitMeta(type):
     def __new__(cls, name, bases, cls_dict):
         class_init = cls_dict.get('__classinit__', None)
-        if class_init:
-            cls_dict['__classinit__'] = staticmethod(class_init)
         return super(ClassInitMeta, cls).__new__(cls, name, bases, cls_dict)
 
     def __init__(self, name, bases, cls_dict):
         if callable(getattr(self, '__classinit__', None)):
-            self.__classinit__(self, name, bases, cls_dict)
+            self.__classinit__(name, bases, cls_dict)
 
 def copy(src, dst):
     fsrc = None
@@ -53,7 +51,7 @@ def move(src, dst):
         os.unlink(src)
 
 def test_splits(dir_list, transcode=False):
-    from audiomangler import get_codec
+    from audiomangler.codecs import get_codec
     if transcode and Config['type']:
         targetcodec = Config['type']
         if ', ' in targetcodec:

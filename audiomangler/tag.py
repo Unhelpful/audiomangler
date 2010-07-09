@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
 ###########################################################################
-from mutagen.id3 import ID3, USLT
+from mutagen.id3 import ID3
 from mutagen._vorbis import VCommentDict
 from mutagen.apev2 import APEv2
 from mutagen import id3
@@ -23,11 +23,11 @@ def splitnumber(num, label):
     num = num and num.groups() or [0, 0]
     try:
         index = int(num[0])
-    except:
+    except ValueError:
         index = 0
     try:
         total = int(num[1])
-    except:
+    except ValueError:
         total = 0
     ret = []
     if index:
@@ -36,16 +36,16 @@ def splitnumber(num, label):
             ret.append(('total'+label+'s', total))
     return ret
 
-def joinnumber(input, label, outlabel = None):
+def joinnumber(input_, label, outlabel = None):
     try:
-        index = input.get(label+'number', 0)
+        index = input_.get(label+'number', 0)
         if isinstance(index, (list, tuple)):
             index = index[0]
         index = int(index)
     except ValueError:
         index = 0
     try:
-        total = input.get('total'+label+'s', 0)
+        total = input_.get('total'+label+'s', 0)
         if isinstance(total, (list, tuple)):
             total = total[0]
         total = int(total)
@@ -61,7 +61,7 @@ def joinnumber(input, label, outlabel = None):
         ret.append((outlabel, index))
     return ret
 
-def id3tiplin(i, o, k, v):
+def id3tiplin(i__, out_dict, k__, in_val):
     pmap = {
         'arranger':'arranger',
         'engineer':'engineer',
@@ -69,18 +69,18 @@ def id3tiplin(i, o, k, v):
         'DJ-mix':'djmixer',
         'mix':'mixer'
     }
-    for key, value in v.people:
+    for key, val in in_val.people:
         if key in pmap:
-            o.setdefault(pmap[key], []).append(value)
+            out_dict.setdefault(pmap[key], []).append(val)
 
-def id3usltin(i, o, k, v):
-    text = u'\n'.join(v.text.splitlines())
+def id3usltin(i__, o__, k__, val):
+    text = u'\n'.join(val.text.splitlines())
     return [('lyrics', [text])]
 
-def id3ufidin(i, o, k, v):
-    return (('musicbrainz_trackid', [v.data]), )
+def id3ufidin(i__, o__, k__, val):
+    return (('musicbrainz_trackid', [val.data]), )
 
-def id3tiplout(i, o, k, v):
+def id3tiplout(i__, out_dict, key, val):
     pmap = {
         'arranger':'arranger',
         'engineer':'engineer',
@@ -88,85 +88,84 @@ def id3tiplout(i, o, k, v):
         'djmixer':'DJ-mix',
         'mixer':'mix'
     }
-    if k not in pmap:
+    if key not in pmap:
         return
-    k = pmap[k]
-    t = o.setdefault('TIPL', [])
-    t.extend(zip([k]*len(v), v))
+    key = pmap[key]
+    tag = out_dict.setdefault('TIPL', [])
+    tag.extend(zip([key]*len(val), val))
 
-def id3rva2in(i, o, k, v):
-    if v.channel != 1:
+def id3rva2in(i__, out_dict, k__, val):
+    if val.channel != 1:
         return
-    if not v.desc:
-        if 'replaygain_track_gain' in o:
+    if not val.desc:
+        if 'replaygain_track_gain' in out_dict:
             return
         else:
             target = 'track'
-    elif v.desc.lower() == 'track':
+    elif val.desc.lower() == 'track':
         target = 'track'
-    elif v.desc.lower() == 'album':
+    elif val.desc.lower() == 'album':
         target = 'album'
-    o['_'.join(('replaygain', target, 'gain'))] = "%.3f dB" % v.gain
-    o['_'.join(('replaygain', target, 'peak'))] = "%.8f" % v.peak
+    out_dict['_'.join(('replaygain', target, 'gain'))] = "%.3f dB" % val.gain
+    out_dict['_'.join(('replaygain', target, 'peak'))] = "%.8f" % val.peak
 
-def id3rva2out(i, o, k, v):
-    if 'track' in k:
+def id3rva2out(in_dict, out_dict, key, v__):
+    if 'track' in key:
         target = 'track'
-    elif 'album' in k:
+    elif 'album' in key:
         target = 'album'
     try:
-        gain = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain', target, 'gain')), '0.0')).group(0))
-    except Exception:
+        gain = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', in_dict.get('_'.join(('replaygain', target, 'gain')), '0.0')).group(0))
+    except (AttributeError, TypeError, ValueError):
         gain = 0.0
     try:
-        peak = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', i.get('_'.join(('replaygain', target, 'peak')), '0.0')).group(0))
+        peak = float(re.search('[+-]?[0-9]*(\.[0-9]*)?([^0-9]|$)', in_dict.get('_'.join(('replaygain', target, 'peak')), '0.0')).group(0))
         peak = abs(peak)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         peak = 0.0
-    o[':'.join(('RVA2', target))] = id3.RVA2(desc=target, peak=peak, gain=gain, channel=1)
-
-id3_encodings=(
-    'iso-8859-1',
-    'utf-16',
-    'utf-16be',
-    'utf-8'
-)
+    out_dict[':'.join(('RVA2', target))] = id3.RVA2(desc=target, peak=peak, gain=gain, channel=1)
 
 def best_encoding(txt):
-    r = []
-    for n in range(4):
+    id3_encodings = (
+        'iso-8859-1',
+        'utf-16',
+        'utf-16be',
+        'utf-8'
+    )
+    results = []
+    for enc in range(4):
         try:
-            r.append((len(txt.encode(id3_encodings[n])), n))
+            results.append((len(txt.encode(id3_encodings[enc])), enc))
         except UnicodeError:
             pass
-    r.sort()
-    return r[0][1]
+    results.sort()
+    return results[0][1]
 
-def id3itemout(k, v):
-    if isinstance(v, id3.Frame):
-        return k, v
-    fid = k[:4]
+def id3itemout(key, val):
+    if isinstance(val, id3.Frame):
+        return key, val
+    fid = key[:4]
     if fid.startswith('T'):
-        if isinstance(v, basestring):
-            v = [v]
+        if isinstance(val, basestring):
+            val = [val]
         if fid == 'TIPL':
-            enc = best_encoding(u'\0'.join(reduce(lambda x, y: x+y, v)))
+            enc = best_encoding(u'\0'.join(reduce(lambda x, y: x+y, val)))
         else:
-            enc = best_encoding(u'\0'.join(v))
+            enc = best_encoding(u'\0'.join(val))
         if fid == 'TXXX':
-            return k, id3.TXXX(encoding=enc, desc=k.split(':', 1)[1], text=v)
+            return key, id3.TXXX(encoding=enc, desc=key.split(':', 1)[1], text=val)
         else:
-            return k, getattr(id3, fid)(encoding=enc, text=v)
+            return key, getattr(id3, fid)(encoding=enc, text=val)
     elif fid == 'USLT':
-        if isinstance(v, (list, tuple)):
-            v = v[0]
-        enc = best_encoding(v)
-        return "USLT::'und'", id3.USLT(encoding=enc, text=v, lang='und')
-    elif k == 'UFID:http://musicbrainz.org':
-        if isinstance(v, (list, tuple)):
-            v = v[0]
-        return k, id3.UFID(owner='http://musicbrainz.org', data=v)
-tagmap = {
+        if isinstance(val, (list, tuple)):
+            val = val[0]
+        enc = best_encoding(val)
+        return "USLT::'und'", id3.USLT(encoding=enc, text=val, lang='und')
+    elif key == 'UFID:http://musicbrainz.org':
+        if isinstance(val, (list, tuple)):
+            val = val[0]
+        return key, id3.UFID(owner='http://musicbrainz.org', data=val)
+TAGMAP = {
     APEv2:{
         'keysasis':(
             'album',
@@ -446,7 +445,8 @@ tagmap = {
     }
 
 }
-for value in tagmap.values():
+
+for value in TAGMAP.values():
     if 'keysasis' in value:
         value['keysasis'] = frozenset(value['keysasis'])
 
@@ -457,7 +457,7 @@ class NormMetaData(dict):
 
     @classmethod
     def tagmapfor(cls, meta):
-        global tagmap
+        tagmap = TAGMAP
         for c in (type(meta), ) + type(meta).__bases__:
             if c in tagmap:
                 return tagmap[c]
@@ -477,7 +477,7 @@ class NormMetaData(dict):
                     key = tagmap['in']['keytrans'](key)
                 if 'keysasis' in tagmap and key in tagmap['keysasis']:
                     if 'valuetrans' in tagmap['in']:
-                            value = tagmap['in']['valuetrans'](value)
+                        value = tagmap['in']['valuetrans'](value)
                     newmeta[key] = value
                 elif 'keymap' in tagmap['in'] and key in tagmap['in']['keymap']:
                     keymap = tagmap['in']['keymap'][key]
@@ -537,8 +537,10 @@ class NormMetaData(dict):
         if 'itemtrans' in tagmap['out']:
             itemtrans = tagmap['out']['itemtrans']
         elif 'keytrans' in tagmap['out'] or 'valuetrans' in tagmap['out']:
-            keytrans = 'keytrans' in tagmap['out'] and tagmap['out']['keytrans'] or (lambda x: x)
-            valuetrans = 'valuetrans' in tagmap['out'] and tagmap['out']['valuetrans'] or (lambda x: x)
+            keytrans = ('keytrans' in tagmap['out'] and
+                tagmap['out']['keytrans'] or (lambda x: x))
+            valuetrans = ('valuetrans' in tagmap['out'] and
+                tagmap['out']['valuetrans'] or (lambda x: x))
             itemtrans = lambda k, v: (keytrans(k), valuetrans(v))
         if itemtrans:
             target.tags.update(itemtrans(k, v) for k, v in newmeta.items())

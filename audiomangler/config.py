@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
@@ -11,16 +11,10 @@ import sys
 from ConfigParser import RawConfigParser, NoOptionError, NoSectionError
 
 def clear_cache(func):
+    @wraps(func)
     def proxy(self, *args, **kw):
         self._cache.clear()
         return func(self, *args, **kw)
-    val = getattr(func,'__doc__')
-    if hasattr(func,'im_func'):
-        func = func.im_func
-    for key in ('__doc__','__name__','func_doc'):
-        val = getattr(func,key)
-        if val is not None:
-            setattr(proxy,key, val)
     return proxy
 
 class AMConfig(RawConfigParser):
@@ -33,10 +27,10 @@ class AMConfig(RawConfigParser):
             section = section[0]
             self.add_section(section)
             for key, value in items:
-                self.set(section,key,value)
+                self.set(section, key, value)
 
-    @clear_cache
     def __setitem__(self, key, value):
+        self._cache.clear()
         self._current_values[key] = value
 
     def __getitem__(self, key):
@@ -46,16 +40,16 @@ class AMConfig(RawConfigParser):
             self._cache[key] = self._current_values[key]
             return self._current_values[key]
         trysources = {
-           'preset':('profile','type','defaults'),
-           'type':('profile','defaults'),
-           'profile':('defaults',)
-        }.get(key, ('profile','type','preset','defaults'))
+           'preset':('profile', 'type', 'defaults'),
+           'type':('profile', 'defaults'),
+           'profile':('defaults', )
+        }.get(key, ('profile', 'type', 'preset', 'defaults'))
         for source in trysources:
             if source == 'preset':
                 source = [self['type']]
                 if not source[0]:
                     continue
-                source.extend(('_',self['preset']))
+                source.extend(('_', self['preset']))
                 if not source[2]:
                     continue
                 source = ''.join(source)
@@ -64,7 +58,7 @@ class AMConfig(RawConfigParser):
             if not source:
                 continue
             try:
-                ret = RawConfigParser.get(self,source,key)
+                ret = RawConfigParser.get(self, source, key)
             except (NoOptionError, NoSectionError):
                 continue
             else:
@@ -75,10 +69,10 @@ class AMConfig(RawConfigParser):
     def get(self, key, default=None):
         ret = self[key]
         return ret if ret is not None else default
-        
 
-    for n in ('read','readfp','remove_option','remove_section','set'):
-        locals()[n] = clear_cache(getattr(RawConfigParser,n))
+
+    for n in ('read', 'readfp', 'remove_option', 'remove_section', 'set'):
+        locals()[n] = clear_cache(getattr(RawConfigParser, n))
 
 Config = AMConfig(
    (
@@ -86,25 +80,26 @@ Config = AMConfig(
          ('onsplit', 'abort'),
          ('groupby',
             "first("
-                "('album',musicbrainz_albumid),"
-                "('meta',first(albumartist,artist),album,first(catalognumber,asin,isrc)),"
-                "('dir',dir)"
+                "('album', musicbrainz_albumid), "
+                "('meta', first(albumartist, artist), album, first(catalognumber, asin, isrc)), "
+                "('dir', dir)"
             ")"
          ),
-         ('loglevel','INFO'),
-         ('consolelevel','INFO'),
+         ('loglevel', 'INFO'),
+         ('consolelevel', 'INFO'),
          ('trackid',
             "first("
-                "('mbid',musicip_puid,musicbrainz_albumid,first(tracknumber)),"
-                "('meta',title,artist,album,first(year),first(catalognumber,asin,isrc),first(tracknumber))"
+                "('mbid', musicip_puid, musicbrainz_albumid, first(tracknumber)), "
+                "('meta', title, artist, album, first(year), first(catalognumber, asin, isrc), first(tracknumber))"
             ")"
          ),
-         ('sortby', "(first(discnumber),first(tracknumber),first(filename))"),
+         ('sortby', "(first(discnumber), first(tracknumber), first(filename))"),
          ('base', '.'),
          ('filename',
-            "$/first('$type/','')"
-            "$first(releasetype == 'soundtrack' and 'Soundtrack', albumartist, artist)/$album/"
-            "$first('%02d.' % discnumber if discnumber > 0 else '','')"
+            "$/first('$type/', '')"
+            "$first(releasetype == 'soundtrack' and 'Soundtrack', albumartist, "
+                "artist)/$album/"
+            "$first('%02d.' % discnumber if discnumber > 0 else '', '')"
             "$first('%02d ' % tracknumber, '')"
             "$title$first('.%s' % ext, '')"
          ),
@@ -182,7 +177,8 @@ else:
 Config.read(configfile)
 
 def from_config(*names):
-    locals_ = getattr(getattr(sys._getframe(),'f_back',None),'f_locals',None)
+    locals_ = getattr(getattr(sys._getframe(), 'f_back', None),
+        'f_locals', None)
     if locals_ is None:
         return
     ret = []

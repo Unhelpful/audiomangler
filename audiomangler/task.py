@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
 ###########################################################################
+#pylint: disable=E1101,E1103
 import os
 import sys
+import inspect
 from types import FunctionType, GeneratorType
 from twisted.internet import defer, protocol, error, fdesc
 from twisted.python import failure
 from functools import wraps
-from types import GeneratorType
 from multiprocessing import cpu_count
 from audiomangler.config import Config
 from audiomangler.util import ClassInitMeta
@@ -28,14 +29,20 @@ if 'twisted.internet.reactor' not in sys.modules:
 
 from twisted.internet import reactor
 
-def background_task(f):
-    @wraps(f)
-    def proxy(self, *args, **kwargs):
+def background_task(func):
+    argspec = inspect.getargspec(func)
+    env = {}
+    code = """
+def decorate(func):
+    def proxy%s:
         self._register()
-        reactor.callWhenRunning(f, self, *args, **kwargs)
+        reactor.callWhenRunning(%s)
         if not reactor.running:
             reactor.run()
-    return proxy
+    return proxy""" % (inspect.formatargspec(*argspec), ', '.join(['func', 'self'] + ['%s=%s' % (arg, arg) for arg in argspec.args[1:]]))
+    exec code in globals(), env
+    return wraps(func)(env['decorate'](func))
+
 
 def chain(f):
     @wraps(f)
@@ -50,9 +57,11 @@ def chainDeferreds(d1, d2):
 class BaseTask(object):
     "Base class for other Task types, providing handling for Task registration and cleanup, and ensuring that the first task is started inside the reactor."
     __metaclass__ = ClassInitMeta
+    @classmethod
     def __classinit__(cls, name, bases, cls_dict):
         run = getattr(cls, 'run', None)
         if run:
+            cls._run = run
             run = background_task(run)
             if not run.__doc__:
                 run.__doc__ = "Start the task, returning status via <task>.deferred callbacks when the task completes."
@@ -64,26 +73,25 @@ class BaseTask(object):
         self.args = args
         self.deferred = defer.Deferred()
         self.deferred.addBoth(self._complete)
-    
+
     def _register(self):
         self.__class__.__bg_tasks.add(self)
 
     def _complete(self, out):
         if self.deferred.callbacks:
-            self.deferred.addBoth(self.complete)
+            self.deferred.addBoth(self._complete)
             return out
         parent = getattr(self, 'parent', None)
         try:
             if parent:
                 parent.complete_sub(out, self)
-        except:
-            out = failure.Failure()
-        if self in self.__bg_tasks:
-            self.__bg_tasks.remove(self)
-        if not self.__bg_tasks:
-            reactor.stop()
+        finally:
+            if self in self.__bg_tasks:
+                self.__bg_tasks.remove(self)
+            if not self.__bg_tasks:
+                reactor.stop()
         return out
-        
+
 class CLIProcessProtocol(protocol.ProcessProtocol):
     "Support class for CLITask, saving output from the spawned process and triggering task callbacks on exit."
     def __init__(self, task):
@@ -175,7 +183,7 @@ class CLIPipelineTask(BaseSetTask):
         super(CLIPipelineTask, self).__init__(*args)
 
     def run(self, stdin=None, stdout=None, stderr=None):
-        "Start the task, returning status via <task>.deferred callbacks when the task completes. The keyword arguments stdin, stdout, and stderr may be used to override the ones provided at initialization." 
+        "Start the task, returning status via <task>.deferred callbacks when the task completes. The keyword arguments stdin, stdout, and stderr may be used to override the ones provided at initialization."
         if stdin is None:
             stdin = getattr(self, 'stdin', None)
         if stdout is None:
@@ -200,7 +208,7 @@ class CLIPipelineTask(BaseSetTask):
     def complete_sub(self, out, sub):
         super(CLIPipelineTask, self).complete_sub(out, sub)
         if not self.subs:
-                getattr(self, 'main', task = self.tasks[-1])
+            task = getattr(self, 'main', self.tasks[-1])
             chainDeferreds(task.deferred, self.deferred)
 
     def run_sub(self, sub, *args, **kwargs):
@@ -222,6 +230,7 @@ class GeneratorTask(BaseSetTask):
         super(GeneratorTask, self).__init__(gen)
 
     def run(self):
+        assert(isinstance(self.args, GeneratorType))
         try:
             task = self.args.next()
             self.run_sub(task)
@@ -261,17 +270,16 @@ class PoolTask(BaseSetTask):
     __slots__ = 'max_tasks'
     def __init__(self, *args):
         self.max_tasks = int(Config.get('jobs', cpu_count()))
-        if not args or not isinstance(args[0], GeneratorType):
-            args = (arg for arg in args)
-        else:
+        if args and isinstance(args[0], GeneratorType):
             args = args[0]
+        args = iter(args)
         super(PoolTask, self).__init__(args)
 
     def run(self):
         try:
             while len(self.subs) < self.max_tasks:
-                next = self.args.next()
-                self.run_sub(next)
+                next_task = self.args.next()
+                self.run_sub(next_task)
         except StopIteration:
             pass
         if not self.subs:
@@ -282,7 +290,7 @@ class PoolTask(BaseSetTask):
         self.run()
         return out
 
-            
+
 FuncTask=None
 TaskSet=None
 __all__ = []

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
@@ -10,31 +10,29 @@ from __future__ import absolute_import
 import os.path
 import re
 import codecs
-import encodings.punycode
 from RestrictedPython.RCompile import RExpression
 from RestrictedPython.MutatingWalker import walk
 from RestrictedPython.Guards import safe_builtins as eval_builtins
 from string import maketrans
 from compiler import ast
-from audiomangler.config import Config
 
-breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
-pathseptrans = unicode(maketrans('/','_')[:48])
+_breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
+pathseptrans = unicode(maketrans('/', '_')[:48])
 pathtrans = unicode(maketrans(r'/\[]?=+<>;",*|', os.path.sep + '_' * 13)[:125])
 
 eval_builtins = eval_builtins.copy()
 eval_builtins.update(filter=filter, map=map, max=max, min=min, reduce=reduce, reversed=reversed, slice=slice, sorted=sorted)
 del eval_builtins['delattr']
 del eval_builtins['setattr']
-eval_globals = {'__builtins__':eval_builtins, '_getattr_':getattr, '_getitem_': lambda x,y: x[y]}
+eval_globals = {'__builtins__':eval_builtins, '_getattr_':getattr, '_getitem_': lambda x, y: x[y]}
 
 def underscorereplace_errors(e):
     return (u'_' * (e.end - e.start), e.end)
 
 codecs.register_error('underscorereplace', underscorereplace_errors)
 
-def evaluate(item,cdict):
-    if isinstance(item,Expr):
+def evaluate(item, cdict):
+    if isinstance(item, Expr):
         return item.evaluate(cdict)
     else:
         return item
@@ -56,7 +54,7 @@ class InlineFuncsVisitor:
     def _first(self, node, *args):
         clocals = ast.Const(locals)
         clocals.lineno = node.lineno
-        clocals = ast.CallFunc(clocals,[],None,None)
+        clocals = ast.CallFunc(clocals, [], None, None)
         clocals.lineno = node.lineno
         exp = ast.Or([])
         exp.lineno = node.lineno
@@ -72,7 +70,7 @@ class InlineFuncsVisitor:
             exp.nodes.append(item)
         return exp
 
-class Expr(RExpression,object):
+class Expr(RExpression, object):
     _globals = eval_globals
     _cache = {}
 
@@ -84,14 +82,14 @@ class Expr(RExpression,object):
             return cls._cache[key]
         elif isinstance(source, ast.Node):
             return object.__new__(cls)
-        elif isinstance(source,cls):
+        elif isinstance(source, cls):
             return source
 
     def __init__(self, source, filename="", baseexpr=None):
-        if hasattr(self,'_compiled'):
+        if hasattr(self, '_compiled'):
             return
         self._source = source
-        self._baseexpr = baseexpr or getattr(self.__class__,'_baseexpr', None) or self.__class__
+        self._baseexpr = baseexpr or getattr(self.__class__, '_baseexpr', None) or self.__class__
         self._filename = filename
         if not isinstance(source, ast.Node):
             RExpression.__init__(self, source, filename)
@@ -120,14 +118,14 @@ class Expr(RExpression,object):
 
 class StringExpr(Expr):
     def evaluate(self, cdict):
-        ret = super(self.__class__,self).evaluate(cdict)
+        ret = super(self.__class__, self).evaluate(cdict)
         if ret is not None:
             ret = unicode(ret)
         return ret
 
 class SanitizedExpr(Expr):
     def evaluate(self, cdict):
-        ret = super(self.__class__,self).evaluate(cdict)
+        ret = super(self.__class__, self).evaluate(cdict)
         if ret is not None:
             ret = unicode(ret).translate(pathseptrans)
         return ret
@@ -159,11 +157,11 @@ class Format(Expr):
                 ta.nodes.append(item)
         result = ast.Const(''.join)
         result.lineno = 1
-        result = ast.CallFunc(result,[ta],None, None)
+        result = ast.CallFunc(result, [ta], None, None)
         if te.nodes:
             none = ast.Name('None')
             none.lineno = 1
-            test = ast.Compare(none, [('in',te)])
+            test = ast.Compare(none, [('in', te)])
             test.lineno = 1
             result = ast.IfExp(test, none, result)
             result.lineno = 1
@@ -177,7 +175,7 @@ class Format(Expr):
         result = []
         cur = []
         prevend = 0
-        for m in breakre.finditer(self._source):
+        for m in _breakre.finditer(self._source):
     #        import pdb; pdb.set_trace()
             mt = m.group(0)
             mg = m.groupdict()
@@ -227,7 +225,7 @@ class Format(Expr):
                     cur = []
         cur.append(self._source[prevend:])
         if state:
-            raise SyntaxError('unexpected EOF while parsing',(self._filename,1,len(self._source),self._source))
+            raise SyntaxError('unexpected EOF while parsing', (self._filename, 1, len(self._source), self._source))
         if any(cur):
             result.append(''.join(cur))
         return result
@@ -238,7 +236,7 @@ class SanitizedFormat(Format):
 class FileFormat(SanitizedFormat):
     _baseexpr = SanitizedFormat
     def evaluate(self, cdict):
-        ret = super(self.__class__,self).evaluate(cdict)
+        ret = super(self.__class__, self).evaluate(cdict)
         if ret is not None:
             ret = ret.translate(pathtrans)
         return ret
@@ -247,4 +245,4 @@ class FileFormat(SanitizedFormat):
 
 def unique(testset, expr, evalexpr): pass
 
-__all__ = ['Format','FileFormat','Expr','evaluate']
+__all__ = ['Format', 'FileFormat', 'Expr', 'evaluate']

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
@@ -51,12 +51,12 @@ def _get_meta(self):
         if type_ is not None:
             meta['type'] = type_
         self._meta = meta
-    return self._meta
+    return getattr(self,'_meta')
 
 def _set_meta(self, value):
     NormMetaData.converted(value).apply(self, True)
 
-def format(self, filename=None, base=None, preadd={}, postadd={}):
+def _format(self, filename=None, base=None, preadd=(), postadd=()):
     filename, base = from_config('filename', 'base')
     meta = NormMetaData(preadd)
     meta.update(self.meta.flat())
@@ -67,12 +67,13 @@ def format(self, filename=None, base=None, preadd={}, postadd={}):
 def has_replaygain(self):
     return reduce(lambda x, y: x and y in self.meta, ('replaygain_album_gain', 'replaygain_album_peak', 'replaygain_track_gain', 'replaygain_track_peak'), True)
 
-_newargs_untuplize = lambda self: super(self.__class__, self).__getnewargs__()[0]
+def _newargs_untuplize(self):
+    return super(self.__class__, self).__getnewargs__()[0]
 
 SeekPoint.__getnewargs__ = _newargs_untuplize
 CueSheetTrackIndex.__getnewargs__ = _newargs_untuplize
 
-FileType.format = format
+FileType.format = _format
 FileType.meta = property(_get_meta, _set_meta)
 FileType.lossless = False
 FileType.has_replaygain = has_replaygain

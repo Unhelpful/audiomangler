@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 ###########################################################################
-#    Copyright (C) 2008 by Andrew Mahone                                      
-#    <andrew.mahone@gmail.com>                                                             
+#    Copyright (C) 2008 by Andrew Mahone
+#    <andrew.mahone@gmail.com>
 #
 # Copyright: See COPYING file that comes with this distribution
 #
@@ -14,12 +14,10 @@ except ImportError:
     shelve = None
 from audiomangler.config import from_config
 from audiomangler.expression import Expr
-from audiomangler.tag import NormMetaData
 from mutagen import File
 from mutagen import version as mutagen_version
-import time
 
-db_version = (mutagen_version, (0,0))
+db_version = (mutagen_version, (0, 0))
 
 def scan_track(path, from_dir = ''):
     t = None
@@ -28,8 +26,8 @@ def scan_track(path, from_dir = ''):
     except Exception: pass
     if t is not None:
         if from_dir:
-            t.relpath = t.filename.replace(from_dir,'',1).lstrip('/')
-            t.reldir = t.relpath.rsplit('/',1)
+            t.relpath = t.filename.replace(from_dir, '', 1).lstrip('/')
+            t.reldir = t.relpath.rsplit('/', 1)
             if len(t.reldir) > 1:
                 t.reldir = t.reldir[0]
             else:
@@ -43,25 +41,25 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     trackid = Expr(trackid or trackidtxt)
     homedir = os.getenv('HOME')
     if homedir is not None:
-        cachefile = os.path.join(homedir,'.audiomangler')
+        cachefile = os.path.join(homedir, '.audiomangler')
         try:
             os.mkdir(cachefile)
         except OSError:
             pass
-        cachefile = os.path.join(cachefile,'cache')
+        cachefile = os.path.join(cachefile, 'cache')
     else:
         cachefile = 'audiomangler.cache'
     dircache = {}
     if shelve:
         try:
-            dircache = shelve.open(cachefile,protocol=2)
+            dircache = shelve.open(cachefile, protocol=2)
         except Exception:
             pass
-    if dircache.get('//version',None) != db_version:
+    if dircache.get('//version', None) != db_version:
         dircache.clear()
         dircache['//version'] = db_version
-    if isinstance(items,basestring):
-        items = (items,)
+    if isinstance(items, basestring):
+        items = (items, )
     tracks = []
     scanned = set()
     newdircache = {}
@@ -82,7 +80,7 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                 except OSError:
                     print "unable to stat dir %s" % path
                     continue
-                cached = dircache.get(path,None)
+                cached = dircache.get(path, None)
                 if cached and cached['key'] == (dst.st_ino, dst.st_mtime):
                     newcached = cached
                     newtracks = []
@@ -95,9 +93,9 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                         if track['key'] == (fst.st_ino, fst.st_size, fst.st_mtime):
                             newtracks.append(track)
                             t = track['obj']
-                            t._meta_cache = (False,False)
-                            t.relpath = t.filename.replace(item,'',1).lstrip('/')
-                            t.reldir = t.relpath.rsplit('/',1)
+                            t._meta_cache = (False, False)
+                            t.relpath = t.filename.replace(item, '', 1).lstrip('/')
+                            t.reldir = t.relpath.rsplit('/', 1)
                             if len(t.reldir) > 1:
                                 t.reldir = t.reldir[0]
                             else:
@@ -107,7 +105,7 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                             t = scan_track(track['path'])
                             if t is not None:
                                 tracks.append(t)
-                                newtracks.append({'path':track['path'],'obj':t,'key':(fst.st_ino,fst.st_size,fst.st_mtime)})
+                                newtracks.append({'path':track['path'], 'obj':t, 'key':(fst.st_ino, fst.st_size, fst.st_mtime)})
                     for file_ in cached['files']:
                         try:
                             fst = os.stat(file_['path'])
@@ -119,15 +117,15 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                             t = scan_track(file_['path'])
                             if t is not None:
                                 tracks.append(t)
-                                newtracks.append({'path':file_['path'],'obj':t,'key':(fst.st_ino,fst.st_size,fst.st_mtime)})
+                                newtracks.append({'path':file_['path'], 'obj':t, 'key':(fst.st_ino, fst.st_size, fst.st_mtime)})
                             else:
-                                newfiles.append({'path':file_['path'],'key':(fst.st_ino,fst.st_size,fst.st_mtime)})
+                                newfiles.append({'path':file_['path'], 'key':(fst.st_ino, fst.st_size, fst.st_mtime)})
                     newcached['tracks'] = newtracks
                     newcached['files'] = newfiles
                 else:
-                    newcached = {'tracks':[],'dirs':[],'files':[]}
+                    newcached = {'tracks':[], 'dirs':[], 'files':[]}
                     newcached['key'] = (dst.st_ino, dst.st_mtime)
-                    paths = (os.path.join(path,f) for f in sorted(os.listdir(path)))
+                    paths = (os.path.join(path, f) for f in sorted(os.listdir(path)))
                     for filename in paths:
                         if filename in scanned:
                             continue
@@ -143,9 +141,9 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                             t = scan_track(filename)
                             if t is not None:
                                 tracks.append(t)
-                                newcached['tracks'].append({'path':filename,'obj':t,'key':(fst.st_ino,fst.st_size,fst.st_mtime)})
+                                newcached['tracks'].append({'path':filename, 'obj':t, 'key':(fst.st_ino, fst.st_size, fst.st_mtime)})
                             else:
-                                newcached['files'].append({'path':filename,'key':(fst.st_ino,fst.st_size,fst.st_mtime)})
+                                newcached['files'].append({'path':filename, 'key':(fst.st_ino, fst.st_size, fst.st_mtime)})
                         else:
                             continue
                 dirs.extend(newcached['dirs'])
@@ -155,15 +153,15 @@ def scan(items, groupby = None, sortby = None, trackid = None):
             if key.startswith(item):
                 del dircache[key]
     dircache.update(newdircache)
-    if hasattr(dircache,'close'):
+    if hasattr(dircache, 'close'):
         dircache.close()
     albums = {}
     dirs = {}
     trackids = {}
     for t in tracks:
         t.sortkey = t.meta.evaluate(sortby)
-        albums.setdefault(t.meta.evaluate(groupby),[]).append(t)
-        dirs.setdefault(os.path.split(t.filename)[0],[]).append(t)
+        albums.setdefault(t.meta.evaluate(groupby), []).append(t)
+        dirs.setdefault(os.path.split(t.filename)[0], []).append(t)
         t.tid = t.meta.evaluate(trackid)
         if t.tid in trackids:
             print "trackid collision"
@@ -173,9 +171,9 @@ def scan(items, groupby = None, sortby = None, trackid = None):
     #trying not to evaluate sort expressions for every comparison. don't modify
     #metadata during sort. ;)
     for v in albums.itervalues():
-        v.sort(lambda x,y: cmp(x.sortkey,y.sortkey))
+        v.sort(lambda x, y: cmp(x.sortkey, y.sortkey))
     for v in dirs.itervalues():
-        v.sort(lambda x,y: cmp(x.sortkey,y.sortkey))
+        v.sort(lambda x, y: cmp(x.sortkey, y.sortkey))
     return albums, dirs, trackids
 
 __all__ = ['scan']
