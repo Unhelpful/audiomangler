@@ -13,9 +13,9 @@ loglevels.update(map(reversed, loglevels.items()))
 ERROR, WARNING, INFO, VERBOSE, DEBUG = range(5)
 
 class FilteredFileLogObserver(log.FileLogObserver):
-    def __init__(self, f, loglevel=INFO):
+    def __init__(self, f, loglevel=VERBOSE):
         self.output = f
-        self.loglevel = get_level(loglevel, INFO)
+        self.loglevel = get_level(loglevel, VERBOSE)
 
     def emit(self, eventDict):
         if '_noignore' not in eventDict and not eventDict['isError']: return
@@ -36,7 +36,7 @@ class FilteredFileLogObserver(log.FileLogObserver):
 
 class FilteredConsoleLogObserver:
     def __init__(self, loglevel=INFO):
-        self.loglevel = get_level(loglevel, VERBOSE)
+        self.loglevel = get_level(loglevel, INFO)
 
     def start(self):
         log.addObserver(self.emit)
@@ -66,13 +66,15 @@ collector = None
 logfile = None
 logout = None
 
-def get_level(x, default=ERROR):
+def get_level(level, default=ERROR):
     try:
-        return int(x)
+        return int(level)
     except ValueError:
         pass
     try:
-        return loglevels[x]
+        if isinstance(level, basestring):
+            level = level.upper()
+        return loglevels[level]
     except KeyError:
         return default
 
