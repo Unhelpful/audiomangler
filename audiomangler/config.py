@@ -86,7 +86,7 @@ Config = AMConfig(
                 "('dir', dir)"
             ")"
          ),
-         ('loglevel', 'INFO'),
+         ('loglevel', 'VERBOSE'),
          ('consolelevel', 'INFO'),
          ('trackid',
             "first("

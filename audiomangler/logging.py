@@ -36,7 +36,7 @@ class FilteredFileLogObserver(log.FileLogObserver):
 
 class FilteredConsoleLogObserver:
     def __init__(self, loglevel=INFO):
-        self.loglevel = get_level(loglevel, INFO)
+        self.loglevel = get_level(loglevel, VERBOSE)
 
     def start(self):
         log.addObserver(self.emit)
