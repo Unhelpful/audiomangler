@@ -23,11 +23,11 @@ def splitnumber(num, label):
     num = num and num.groups() or [0, 0]
     try:
         index = int(num[0])
-    except ValueError:
+    except (ValueError, TypeError):
         index = 0
     try:
         total = int(num[1])
-    except ValueError:
+    except (ValueError, TypeError):
         total = 0
     ret = []
     if index:
@@ -42,14 +42,14 @@ def joinnumber(input_, label, outlabel = None):
         if isinstance(index, (list, tuple)):
             index = index[0]
         index = int(index)
-    except ValueError:
+    except (ValueError, TypeError):
         index = 0
     try:
         total = input_.get('total'+label+'s', 0)
         if isinstance(total, (list, tuple)):
             total = total[0]
         total = int(total)
-    except ValueError:
+    except (ValueError, TypeError):
         total = 0
     ret = []
     if index:

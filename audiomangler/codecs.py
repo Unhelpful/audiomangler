@@ -32,14 +32,14 @@ codec_map = {}
 class Codec(object):
     __metaclass__ = ClassInitMeta
 
-    _from_wav_multi = False
-    _from_wav_pipe = False
-    _to_wav_pipe = False
-    _replaygain = False
+    has_from_wav_multi = False
+    has_from_wav_pipe = False
+    has_to_wav_pipe = False
+    has_replaygain = False
     lossless = False
     @classmethod
     def __classinit__(cls, name__, bases__, cls_dict):
-        if cls_dict['type_']:
+        if 'type_' in cls_dict:
             codec_map[cls_dict['type_']] = cls
 
     @classmethod
@@ -48,14 +48,14 @@ class Codec(object):
 
     @classmethod
     def from_wav_multi(cls, indir, infiles, outfiles):
-        if not getattr(cls, '_from_wav_multi_cmd', None):
+        if not hasattr('from_wav_multi_cmd'):
             return None
         encopts = Config['encopts']
         if not encopts:
             encopts = ()
         else:
             encopts = tuple(encopts.split())
-        args = cls._from_wav_multi_cmd.evaluate({
+        args = cls.from_wav_multi_cmd.evaluate({
            'indir':indir,
            'infiles':tuple(infiles),
            'outfiles':tuple(outfiles),
@@ -68,7 +68,7 @@ class Codec(object):
 
     @classmethod
     def from_wav_pipe(cls, infile, outfile):
-        if not getattr(cls, '_from_wav_pipe_cmd', None):
+        if not hasattr(cls, 'from_wav_pipe_cmd'):
             return None
         encopts = Config['encopts']
         if not encopts:
@@ -84,7 +84,7 @@ class Codec(object):
             'encopts': encopts,
             'encoder': cls.encoder
         }
-        args = cls._from_wav_pipe_cmd.evaluate(env)
+        args = cls.from_wav_pipe_cmd.evaluate(env)
         stdin = '/dev/null'
         if hasattr(cls, '_from_wav_pipe_stdin'):
             stdin = cls._from_wav_pipe_stdin.evaluate(env)
@@ -92,7 +92,7 @@ class Codec(object):
 
     @classmethod
     def to_wav_pipe(cls, infile, outfile):
-        if not getattr(cls, '_to_wav_pipe_cmd', None):
+        if not hasattr(cls, 'to_wav_pipe_cmd'):
             return None
         env = {
            'infile':infile,
@@ -101,10 +101,10 @@ class Codec(object):
            'type':cls.type_,
            'decoder':cls.decoder
         }
-        args = cls._to_wav_pipe_cmd.evaluate(env)
+        args = cls.to_wav_pipe_cmd.evaluate(env)
         stdout = '/dev/null'
-        if hasattr(cls, '_to_wav_pipe_stdout'):
-            stdout = cls._to_wav_pipe_stdout.evaluate(env)
+        if hasattr(cls, 'to_wav_pipe_stdout'):
+            stdout = cls.to_wav_pipe_stdout.evaluate(env)
         return CLITask(args=args, stdin='/dev/null', stdout=stdout, stderr=sys.stderr, background=False)
 
     @classmethod
@@ -114,8 +114,8 @@ class Codec(object):
             'replaygain':cls.replaygain,
             'files':tuple(files)
         }
-        if metas and hasattr(cls, '_calc_replaygain_cmd'):
-            task = CLITask(*cls._calc_replaygain_cmd.evaluate(env))
+        if metas and hasattr(cls, 'calc_replaygain_cmd'):
+            task = CLITask(*cls.calc_replaygain_cmd.evaluate(env))
             output = yield task
             tracks, album = cls.calc_replaygain(output)
             if tracks:
@@ -123,11 +123,11 @@ class Codec(object):
                     meta.update(track)
                     meta.update(album)
             yield metas
-        elif hasattr(cls, '_replaygain_cmd'):
-            task = CLITask(*cls._replaygain_cmd.evaluate(env))
+        elif hasattr(cls, 'replaygain_cmd'):
+            task = CLITask(*cls.replaygain_cmd.evaluate(env))
             yield task
         elif hasattr(cls, 'calc_replaygain'):
-            task = CLITask(*cls._calc_replaygain_cmd.evaluate(env))
+            task = CLITask(*cls.calc_replaygain_cmd.evaluate(env))
             output = yield task
             tracks, album = cls.calc_replaygain(output)
             for trackfile, trackgain in zip(files, tracks):
@@ -142,10 +142,10 @@ class MP3Codec(Codec):
     type_ = 'mp3'
     encoder = 'lame'
     replaygain = 'mp3gain'
-    _from_wav_multi = True
-    _replaygain = True
-    _from_wav_multi_cmd = Expr("(encoder, '--quiet') + encopts + ('--noreplaygain', '--nogapout', indir, '--nogaptags', '--nogap') + infiles")
-    _calc_replaygain_cmd = Expr("(replaygain, '-q', '-o', '-s', 's')+files")
+    has_from_wav_multi = True
+    has_replaygain = True
+    from_wav_multi_cmd = Expr("(encoder, '--quiet') + encopts + ('--noreplaygain', '--nogapout', indir, '--nogaptags', '--nogap') + infiles")
+    calc_replaygain_cmd = Expr("(replaygain, '-q', '-o', '-s', 's')+files")
 
     @staticmethod
     def calc_replaygain(out):
@@ -167,14 +167,14 @@ class WavPackCodec(Codec):
     encoder = 'wavpack'
     decoder = 'wvunpack'
     replaygain = 'wvgain'
-    _to_wav_pipe = True
-    _from_wav_pipe = True
-    _replaygain = True
+    has_to_wav_pipe = True
+    has_from_wav_pipe = True
+    has_replaygain = True
     lossless = True
-    _to_wav_pipe_cmd = Expr("(decoder, '-q', '-w', infile, '-o', '-')")
-    _to_wav_pipe_stdout = Expr("outfile")
-    _from_wav_pipe_cmd = Expr("(encoder, '-q')+encopts+(infile, '-o', outfile)")
-    _replaygain_cmd = Expr("(replaygain, '-a')+files")
+    to_wav_pipe_cmd = Expr("(decoder, '-q', '-w', infile, '-o', '-')")
+    to_wav_pipe_stdout = Expr("outfile")
+    from_wav_pipe_cmd = Expr("(encoder, '-q')+encopts+(infile, '-o', outfile)")
+    replaygain_cmd = Expr("(replaygain, '-a')+files")
 
 class FLACCodec(Codec):
     ext = 'flac'
@@ -182,14 +182,14 @@ class FLACCodec(Codec):
     encoder = 'flac'
     decoder = 'flac'
     replaygain = 'metaflac'
-    _to_wav_pipe = True
-    _from_wav_pipe = True
-    _replaygain = True
+    has_to_wav_pipe = True
+    has_from_wav_pipe = True
+    has_replaygain = True
     lossless = True
-    _to_wav_pipe_cmd = Expr("(decoder, '-s', '-c', '-d', infile)")
-    _to_wav_pipe_stdout = Expr("outfile")
-    _from_wav_pipe_cmd = Expr("(encoder, '-s')+encopts+(infile, )")
-    _replaygain_cmd = Expr("(replaygain, '--add-replay-gain')+files")
+    to_wav_pipe_cmd = Expr("(decoder, '-s', '-c', '-d', infile)")
+    to_wav_pipe_stdout = Expr("outfile")
+    from_wav_pipe_cmd = Expr("(encoder, '-s')+encopts+(infile, )")
+    replaygain_cmd = Expr("(replaygain, '--add-replay-gain')+files")
 
 class OggVorbisCodec(Codec):
     ext = 'ogg'
@@ -197,13 +197,14 @@ class OggVorbisCodec(Codec):
     encoder = 'oggenc'
     decoder = 'oggdec'
     replaygain = 'vorbisgain'
-    _to_wav_pipe = True
-    _from_wav_pipe = True
-    _replaygain = True
-    _to_wav_pipe_cmd = Expr("(decoder, '-Q', '-o', '-', infile)")
-    _to_wav_pipe_stdout = Expr("outfile")
-    _from_wav_pipe_cmd = Expr("(encoder, '-Q')+encopts+('-o', outfile, infile)")
-    _replaygain_cmd = Expr("(replaygain, '-q', '-a')+files")
+    has_to_wav_pipe = True
+    has_from_wav_pipe = True
+    has_replaygain = True
+    to_wav_pipe_cmd = Expr("(decoder, '-Q', '-o', '-', infile)")
+    to_wav_pipe_stdout = Expr("outfile")
+    from_wav_pipe_cmd = Expr("(encoder, '-Q')+encopts+('-o', outfile, infile)")
+    replaygain_cmd = Expr("(replaygain, '-q', '-a')+files")
+    calc_replaygain_cmd = Expr("(replaygain, '-a', '-n', '-d')+files")
 
     @classmethod
     def calc_replaygain(cls, files):
@@ -314,9 +315,10 @@ def transcode_set(targetcodec, fileset, targetfiles, alsem, trsem, workdirs, wor
                 bgprocs = set()
                 dtask = get_codec(i).to_wav_pipe(i.meta['path'], p)
                 etask = targetcodec.from_wav_pipe(p, o)
-                ttask = FuncTask(background=True, target=transcode_track,
-                   args=(dtask, etask, trsem)
-                )
+                # FuncTask removed
+                #ttask = FuncTask(background=True, target=transcode_track,
+                   #args=(dtask, etask, trsem)
+                #)
                 if trsem:
                     trsem.acquire()
                     bgprocs.add(ttask.run())

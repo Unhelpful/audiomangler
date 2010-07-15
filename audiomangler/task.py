@@ -18,6 +18,7 @@ from multiprocessing import cpu_count
 from audiomangler.config import Config
 from audiomangler.util import ClassInitMeta
 from audiomangler.logging import err
+from decorator import decorator
 
 if 'twisted.internet.reactor' not in sys.modules:
     for reactor in 'kqreactor', 'epollreactor', 'pollreactor', 'selectreactor':
@@ -29,19 +30,26 @@ if 'twisted.internet.reactor' not in sys.modules:
 
 from twisted.internet import reactor
 
-def background_task(func):
-    argspec = inspect.getargspec(func)
-    env = {}
-    code = """
-def decorate(func):
-    def proxy%s:
-        self._register()
-        reactor.callWhenRunning(%s)
-        if not reactor.running:
-            reactor.run()
-    return proxy""" % (inspect.formatargspec(*argspec), ', '.join(['func', 'self'] + ['%s=%s' % (arg, arg) for arg in argspec.args[1:]]))
-    exec code in globals(), env
-    return wraps(func)(env['decorate'](func))
+@decorator
+def background_task(func, self, *args, **kwargs):
+    self._register()
+    reactor.callWhenRunning(func, self, *args, **kwargs)
+    if not reactor.running:
+        reactor.run()
+
+#def background_task(func):
+    #argspec = inspect.getargspec(func)
+    #env = {}
+    #code = """
+#def decorate(func):
+    #def proxy%s:
+        #self._register()
+        #reactor.callWhenRunning(%s)
+        #if not reactor.running:
+            #reactor.run()
+    #return proxy""" % (inspect.formatargspec(*argspec), ', '.join(['func', 'self'] + ['%s=%s' % (arg, arg) for arg in argspec.args[1:]]))
+    #exec code in globals(), env
+    #return wraps(func)(env['decorate'](func))
 
 
 def chain(f):
@@ -62,7 +70,7 @@ class BaseTask(object):
         run = getattr(cls, 'run', None)
         if run:
             cls._run = run
-            run = background_task(run)
+            run = background_task(run.im_func)
             if not run.__doc__:
                 run.__doc__ = "Start the task, returning status via <task>.deferred callbacks when the task completes."
             cls.run = run
@@ -215,13 +223,11 @@ class CLIPipelineTask(BaseSetTask):
         super(CLIPipelineTask, self).run_sub(sub, *args, **kwargs)
         self.tasks.append(sub)
 
-def generator_task(f):
+@decorator
+def generator_task(func, *args, **kwargs):
     "Decorator function wrapping a generator that yields Tasks in a GeneratorTask."
-    @wraps(f)
-    def proxy(*args, **kwargs):
-        gen = f(*args, **kwargs)
-        return GeneratorTask(gen)
-    return proxy
+    gen = func(*args, **kwargs)
+    return GeneratorTask(gen)
 
 class GeneratorTask(BaseSetTask):
     "Task that runs subtasks produced by a generator, passing their output back via the generator's send method. If the generator yields a value that is not a Task, that value will be passed to the GeneratorTask's callback."

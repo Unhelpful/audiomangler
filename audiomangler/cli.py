@@ -44,6 +44,8 @@ def parse_options(options = []):
             try:
                 (opts, args) = getopt.getopt(args, s_opts, l_opts)
             except getopt.GetoptError:
+                import traceback
+                traceback.print_exception(*sys.exc_info())
                 print_usage(options)
                 sys.exit(0)
             for k, v in opts:
@@ -155,12 +157,16 @@ def replaygain_task_generator(album_list):
         if len(profiles) != 1:
             continue
         profile = profiles.pop()
-        if profile[1] not in 8000, 11025, 12000, 16000, 22050, 24, 32, 44100, 48000:
+        dir_ = album[0].meta.flat()['dir']
+        if profile[1] not in (8000, 11025, 12000, 16000, 22050, 24, 32, 44100, 48000):
+            print "invalid bitrate for %s" % dir_
             continue
         codec = get_codec(profile[0])
-        if not codec or not codec._replaygain:
+        if not codec or not codec.has_replaygain:
+            print "replaygain not supported for %s" % dir_
             continue
         if reduce(lambda x, y: x and y.has_replaygain(), album, True):
+            print "all tracks have replaygain for %s" % dir_
             continue
         msg(consoleformat=u"Adding replaygain values to %(albumtitle)s",
             format="rg: %(tracks)r",

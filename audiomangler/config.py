@@ -8,6 +8,7 @@
 ###########################################################################
 import os, os.path
 import sys
+from functools import wraps
 from ConfigParser import RawConfigParser, NoOptionError, NoSectionError
 
 def clear_cache(func):
