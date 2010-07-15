@@ -6,7 +6,6 @@
 # Copyright: See COPYING file that comes with this distribution
 #
 ###########################################################################
-from __future__ import absolute_import
 import os.path
 import re
 import codecs

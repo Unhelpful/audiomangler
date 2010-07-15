@@ -15,7 +15,7 @@ import errno
 from functools import wraps
 from audiomangler.config import Config
 from audiomangler import util
-from audiomangler.codecs import sync_sets, get_codec
+from audiomangler.audiocodecs import sync_sets, get_codec
 from audiomangler.scanner import scan
 from audiomangler.task import PoolTask
 from audiomangler.logging import *

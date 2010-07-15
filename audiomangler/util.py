@@ -51,7 +51,7 @@ def move(src, dst):
         os.unlink(src)
 
 def test_splits(dir_list, transcode=False):
-    from audiomangler.codecs import get_codec
+    from audiomangler.audiocodecs import get_codec
     if transcode and Config['type']:
         targetcodec = Config['type']
         if ', ' in targetcodec:

@@ -15,7 +15,7 @@ from audiomangler import mutagenext
 from audiomangler import util
 from audiomangler import task
 from audiomangler import scanner
-from audiomangler import codecs
+from audiomangler import audiocodecs
 from audiomangler import cli
 
 __all__ = []
