@@ -20,8 +20,10 @@ from audiomangler.scanner import scan
 from audiomangler.task import PoolTask
 from audiomangler.logging import *
 
-def parse_options(options = []):
+def parse_options(options = ()):
+    options += (('c:', '', '', 'set an arbitrary config option with an argument of option=value'),)
     def decorator(f):
+        options 
         @wraps(f)
         def proxy(*args):
             if not args:
@@ -35,10 +37,12 @@ def parse_options(options = []):
             l_opts = []
             for (s_opt, l_opt, name, desc) in options:
                 if s_opt:
-                    name_map['-'+s_opt.rstrip(':')] = name
+                    if name:
+                        name_map['-'+s_opt.rstrip(':')] = name
                     s_opts.append(s_opt)
                 if l_opt:
-                    name_map['--'+l_opt.rstrip('=')] = name
+                    if name:
+                        name_map['--'+l_opt.rstrip('=')] = name
                     l_opts.append(l_opt)
             s_opts = ''.join(s_opts)
             try:
@@ -49,7 +53,10 @@ def parse_options(options = []):
                 print_usage(options)
                 sys.exit(0)
             for k, v in opts:
-                k = name_map[k]
+                if k == '-c':
+                    k, v = v.split('=', 1)
+                else:
+                    k = name_map[k]
                 Config[k] = v
             f(*args)
         return proxy
@@ -61,7 +68,10 @@ def print_usage(opts):
 
 options:""" % sys.argv[0]
     for short, long_, name, desc in opts:
-        print "    -%s, --%-10s  %s" % (short.rstrip(':'), long_.rstrip('='), desc)
+        if long_:
+            print "    -%s, --%-10s  %s" % (short.rstrip(':'), long_.rstrip('='), desc)
+        else:
+            print "    -%s                %s" % (short.rstrip(':'), desc)
 
 common_opts = (
     ('b:', 'base=', 'base', 'base directory for target files'),
@@ -157,16 +167,12 @@ def replaygain_task_generator(album_list):
         if len(profiles) != 1:
             continue
         profile = profiles.pop()
-        dir_ = album[0].meta.flat()['dir']
         if profile[1] not in (8000, 11025, 12000, 16000, 22050, 24, 32, 44100, 48000):
-            print "invalid bitrate for %s" % dir_
             continue
         codec = get_codec(profile[0])
         if not codec or not codec.has_replaygain:
-            print "replaygain not supported for %s" % dir_
             continue
         if reduce(lambda x, y: x and y.has_replaygain(), album, True):
-            print "all tracks have replaygain for %s" % dir_
             continue
         msg(consoleformat=u"Adding replaygain values to %(albumtitle)s",
             format="rg: %(tracks)r",
