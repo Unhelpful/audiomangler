@@ -168,11 +168,20 @@ def replaygain_task_generator(album_list):
             continue
         profile = profiles.pop()
         if profile[1] not in (8000, 11025, 12000, 16000, 22050, 24, 32, 44100, 48000):
+            msg(consoleformat=u"Skipping replaygain for %(albumtitle)s because of unsupported sample rate",
+                format="skip rg (sample rate unsupported): %(tracks)r",
+                albumtitle=album[0].meta.flat().get('album', '[unknown]'), tracks=tuple(t.filename for t in album), loglevel=VERBOSE)
             continue
         codec = get_codec(profile[0])
         if not codec or not codec.has_replaygain:
+            msg(consoleformat=u"Skipping replaygain for %(albumtitle)s because codec does not support it",
+                format="skip rg (codec unsupported): %(tracks)r",
+                albumtitle=album[0].meta.flat().get('album', '[unknown]'), tracks=tuple(t.filename for t in album), loglevel=VERBOSE)
             continue
         if reduce(lambda x, y: x and y.has_replaygain(), album, True):
+            msg(consoleformat=u"Skipping replaygain for %(albumtitle)s because all tracks have replaygain tags",
+                format="skip rg (already present): %(tracks)r",
+                albumtitle=album[0].meta.flat().get('album', '[unknown]'), tracks=tuple(t.filename for t in album), loglevel=VERBOSE)
             continue
         msg(consoleformat=u"Adding replaygain values to %(albumtitle)s",
             format="rg: %(tracks)r",

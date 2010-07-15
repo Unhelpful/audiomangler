@@ -8,16 +8,14 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-loglevels = dict(ERROR=0, WARNING=1, INFO=2, DEBUG=3)
+loglevels = dict(ERROR=0, WARNING=1, INFO=2, VERBOSE=3, DEBUG=4)
 loglevels.update(map(reversed, loglevels.items()))
-ERROR, WARNING, INFO, DEBUG = range(4)
+ERROR, WARNING, INFO, VERBOSE, DEBUG = range(5)
 
 class FilteredFileLogObserver(log.FileLogObserver):
     def __init__(self, f, loglevel=INFO):
         self.output = f
-        if isinstance(loglevel, basestring):
-            loglevel = loglevels[loglevel]
-        self.loglevel = loglevel
+        self.loglevel = get_level(loglevel, INFO)
 
     def emit(self, eventDict):
         if '_noignore' not in eventDict and not eventDict['isError']: return
@@ -38,7 +36,7 @@ class FilteredFileLogObserver(log.FileLogObserver):
 
 class FilteredConsoleLogObserver:
     def __init__(self, loglevel=INFO):
-        self.loglevel = loglevel
+        self.loglevel = get_level(loglevel, INFO)
 
     def start(self):
         log.addObserver(self.emit)
@@ -48,6 +46,7 @@ class FilteredConsoleLogObserver:
 
     def emit(self, eventDict):
         if '_noignore' not in eventDict and not eventDict['isError']: return
+
         if eventDict.get('loglevel', DEBUG) > self.loglevel:
             return
         encoding = sys.stdout.encoding
@@ -97,7 +96,12 @@ def err(*msg, **kwargs):
         log.msg(_noignore=1, *msg, **kwargs)
 
 def msg(*msg, **kwargs):
-    global logfile
+    global logfile, logout
+    if logout is None:
+        try:
+            logout = FilteredConsoleLogObserver(Config['consolelevel'])
+            logout.start()
+        except: pass
     kwargs.setdefault('loglevel', DEBUG)
     if kwargs['loglevel'] == ERROR:
         err(_noignore=1, *msg, **kwargs)
@@ -131,15 +135,10 @@ def cleanup():
                 print "Errors are also recorded in the logfile '%s'." % os.path.abspath(logfile.output.name)
     sys.stdout.flush()
 
-try:
-    logout = FilteredConsoleLogObserver(Config['consolelevel'])
-    logout.start()
-    if log.defaultObserver:
-        log.defaultObserver.stop()
-        log.defaultObserver = None
-except:
-    pass
+if log.defaultObserver:
+    log.defaultObserver.stop()
+    log.defaultObserver = None
 
 atexit.register(cleanup)
 
-__all__ = ['err', 'msg', 'fatal', 'ERROR', 'WARNING', 'INFO', 'DEBUG']
+__all__ = ['err', 'msg', 'fatal', 'ERROR', 'WARNING', 'INFO', 'VERBOSE', 'DEBUG']
