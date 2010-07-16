@@ -11,11 +11,13 @@ import os, os.path
 import sys
 import re
 import Image
+import atexit
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
 from tempfile import mkdtemp
+from shutil import rmtree
 from threading import BoundedSemaphore, RLock
 from subprocess import Popen, PIPE
 from mutagen import FileType
@@ -64,7 +66,7 @@ class Codec(object):
            'encopts':encopts,
            'encoder':cls.encoder
         })
-        return (CLITask(args=args, stdin='/dev/null', stdout='/dev/null', stderr=sys.stderr, background=True))
+        return CLITask(args=args, stderr=sys.stderr, background=True)
 
     @classmethod
     def from_wav_pipe(cls, infile, outfile):
@@ -85,10 +87,12 @@ class Codec(object):
             'encoder': cls.encoder
         }
         args = cls.from_wav_pipe_cmd.evaluate(env)
+        print args
         stdin = '/dev/null'
         if hasattr(cls, '_from_wav_pipe_stdin'):
             stdin = cls._from_wav_pipe_stdin.evaluate(env)
-        return CLITask(args=args, stdin=stdin, stdout='/dev/null', stderr=sys.stderr, background=True)
+            print args
+        return CLITask(*args, stdin=stdin)
 
     @classmethod
     def to_wav_pipe(cls, infile, outfile):
@@ -227,6 +231,100 @@ class OggVorbisCodec(Codec):
         else:
             album = (('replaygain_album_peak', apeak),)
         return tracks, album
+
+class PipeManager(object):
+    __slots__ = 'pipes', 'pipedir', 'count', 'prefix', 'suffix'
+    def __init__(self, base=None, prefix='', suffix=''):
+        self.pipedir = base
+        self.prefix = prefix
+        self.suffix = suffix
+        self.pipes = set()
+        self.count = 0
+
+    def create_dir(self):
+        if self.pipedir is None:
+            self.pipedir = os.path.abspath(Config['workdir'] or Config['base'])
+        self.pipedir = mkdtemp(prefix='audiomangler_work_', dir=self.pipedir)
+        atexit.register(self.cleanup)
+
+    def get_pipes(self, count=1):
+        result = []
+        prefix=self.prefix
+        suffix=self.suffix
+        if not self.count:
+            self.create_dir()
+        for idx in xrange(count):
+            if not self.pipes:
+                newpath = os.path.join(self.pipedir,'%s%08x%s' % (prefix, self.count, suffix))
+                self.count += 1
+                os.mkfifo(newpath)
+                self.pipes.add(newpath)
+            result.append(self.pipes.pop())
+        result.sort()
+        return result
+
+    def free_pipes(self, pipes):
+        if isinstance(pipes, basestring):
+            pipes = (pipes,)
+        self.pipes.update(pipes)
+
+    def cleanup(self):
+        rmtree(self.pipedir, ignore_errors=True)
+
+class FileManager(object):
+    __slots__ = 'files', 'filedir', 'count', 'prefix', 'suffix'
+    def __init__(self, base=None, prefix='', suffix=''):
+        self.filedir = base
+        self.prefix = prefix
+        self.suffix = suffix
+        self.files = set()
+        self.count = 0
+
+    def create_dir(self):
+        if self.filedir is None:
+            workdir = Config['workdir']
+            if workdir:
+                workdir = os.path.abspath(workdir)
+            basedir = Config['base']
+            if basedir:
+                basedir = os.path.abspath(basedir)
+            print "%r, %r" % (workdir, basedir)
+            if workdir is None or workdir == basedir:
+                global pipe_manager
+                pipe_manager.create_dir()
+                self.filedir = pipe_manager.pipedir
+                return
+            elif not workdir:
+                workdir = basedir
+            self.filedir = workdir
+        self.filedir = mkdtemp(prefix='audiomangler_work_', dir=self.filedir)
+        atexit.register(self.cleanup)
+
+    def get_files(self, count=1):
+        result = []
+        prefix=self.prefix
+        suffix=self.suffix
+        if not self.count:
+            self.create_dir()
+        for idx in xrange(count):
+            if not self.files:
+                newpath = os.path.join(self.pipedir,'%s%08x%s' % (prefix, self.count, suffix))
+                self.count += 1
+                self.files.add(newpath)
+            result.append(self.files.pop())
+        result.sort()
+        return result
+
+    def free_files(self, files):
+        if isinstance(files, basestring):
+            files = (files,)
+        self.files.update(files)
+
+    def cleanup(self):
+        rmtree(self.filedir, ignore_errors=True)
+
+pipe_manager = PipeManager(prefix='pipe', suffix='.wav')
+file_manager = FileManager(prefix='out')
 
 def transcode_track(dtask, etask, sem):
     etask.run()
