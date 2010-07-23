@@ -293,7 +293,19 @@ class PoolTask(BaseSetTask):
 
     def complete_sub(self, out, sub):
         out = super(PoolTask, self).complete_sub(out, sub)
-        self.run()
+        args = self.args
+        send = getattr(args, 'send', None)
+        try:
+            if send:
+                next = send((out, sub))
+            else:
+                next = args.next()
+        except StopIteration:
+            next = None
+        if isinstance(next, BaseTask):
+            self.run_sub(next)
+        if not self.subs:
+            self.deferred.callback(None)
         return out
 
 
