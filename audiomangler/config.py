@@ -97,7 +97,6 @@ Config = AMConfig(
          ('sortby', "(first(discnumber), first(tracknumber), first(filename))"),
          ('base', '.'),
          ('filename',
-            "$/first('$type/', '')"
             "$first(releasetype == 'soundtrack' and 'Soundtrack', albumartist, "
                 "artist)/$album/"
             "$first('%02d.' % discnumber if discnumber > 0 else '', '')"
