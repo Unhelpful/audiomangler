@@ -50,17 +50,8 @@ def move(src, dst):
         copy(src, dst)
         os.unlink(src)
 
-def test_splits(dir_list, transcode=False):
-    from audiomangler.audiocodecs import get_codec
-    if transcode and Config['type']:
-        targetcodec = Config['type']
-        if ', ' in targetcodec:
-            allowedcodecs = targetcodec.split(',')
-            targetcodec = allowedcodecs[0]
-            allowedcodecs = frozenset(allowedcodecs)
-        else:
-            allowedcodecs = frozenset((targetcodec,))
-        targetcodec = get_codec(targetcodec)
+def test_splits(dir_list, allowedcodecs=None, targetcodec=None):
+    if targetcodec and allowdcodecs:
         postadd = lambda type_: {} if type_ in allowedcodecs else {'type':targetcodec.type_, 'ext':targetcodec.ext}
     else:
         postadd = lambda type_: {}
