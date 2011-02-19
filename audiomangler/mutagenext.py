@@ -35,8 +35,8 @@ def _get_meta(self):
             meta = NormMetaData.converted(self)
         path = getattr(self, 'filename', None)
         if isinstance(path, basestring):
-            (meta['dir'], meta['name']) = (s.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace') for s in os.path.split(path))
-            meta['path'] = path.decode(Config['fs_encoding'], Config['fs_encoding_err'] or 'replace')
+            (meta['dir'], meta['name']) = os.path.split(path)
+            meta['path'] = path
             meta['basename'] = os.path.splitext(meta['name'])[0]
         relpath = getattr(self, 'relpath', None)
         if isinstance(relpath, basestring):
