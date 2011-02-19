@@ -28,6 +28,7 @@ from audiomangler.expression import Expr, Format
 from audiomangler import util
 from audiomangler.util import ClassInitMeta
 from mutagen import File
+from audiomangler.logging import *
 
 codec_map = {}
 
@@ -49,7 +50,7 @@ class Codec(object):
         return ''.join((filename.rsplit('.', 1)[0], '.', cls.ext))
 
     @classmethod
-    def from_wav_multi(cls, indir, infiles, outfiles):
+    def from_wav_multi(cls, outdir, infiles, outfiles):
         if not hasattr('from_wav_multi_cmd'):
             return None
         encopts = Config['encopts']
@@ -58,7 +59,7 @@ class Codec(object):
         else:
             encopts = tuple(encopts.split())
         args = cls.from_wav_multi_cmd.evaluate({
-           'indir':indir,
+           'outdir':outdir,
            'infiles':tuple(infiles),
            'outfiles':tuple(outfiles),
            'ext':cls.ext,
@@ -108,37 +109,33 @@ class Codec(object):
         args = cls.to_wav_pipe_cmd.evaluate(env)
         stdout = '/dev/null'
         if hasattr(cls, 'to_wav_pipe_stdout'):
-            stdout = cls.to_wav_pipe_stdout.evaluate(env)
-        return CLITask(args=args, stdin='/dev/null', stdout=stdout, stderr=sys.stderr, background=False)
+            stdout = 'w:' + cls.to_wav_pipe_stdout.evaluate(env)
+        return CLITask(args=args, stdout=stdout)
 
     @classmethod
     @generator_task
-    def add_replaygain(cls, files, metas=None):
+    def add_replaygain(cls, files, metas=()):
         env = {
             'replaygain':cls.replaygain,
             'files':tuple(files)
         }
-        if metas and hasattr(cls, 'calc_replaygain_cmd'):
-            task = CLITask(*cls.calc_replaygain_cmd.evaluate(env))
-            output = yield task
-            tracks, album = cls.calc_replaygain(output)
-            if tracks:
-                for meta, track in zip(metas, tracks):
-                    meta.update(track)
-                    meta.update(album)
-            yield metas
-        elif hasattr(cls, 'replaygain_cmd'):
+        if hasattr(cls, 'replaygain_cmd') and (not metas or not hasattr(cls, calc_replaygain)):
             task = CLITask(*cls.replaygain_cmd.evaluate(env))
             yield task
         elif hasattr(cls, 'calc_replaygain'):
             task = CLITask(*cls.calc_replaygain_cmd.evaluate(env))
             output = yield task
             tracks, album = cls.calc_replaygain(output)
-            for trackfile, trackgain in zip(files, tracks):
-                f = File(trackfile)
-                m = NormMetaData(trackgain + album)
-                m.apply(f)
-                f.save()
+            if metas:
+                for meta, track_gain in zip(metas, tracks):
+                    NormMetaData(track_gain + album).apply(meta)
+                yield metas
+            else:
+                file_objs = [File(f) for f in files]
+                for file_obj, trackfile, trackgain in zip(file_objs, tracks):
+                    meta = NormMetaData(trackgain + album)
+                    meta.apply(file_obj)
+                    f.save()
 
 
 class MP3Codec(Codec):
@@ -148,7 +145,7 @@ class MP3Codec(Codec):
     replaygain = 'mp3gain'
     has_from_wav_multi = True
     has_replaygain = True
-    from_wav_multi_cmd = Expr("(encoder, '--quiet') + encopts + ('--noreplaygain', '--nogapout', indir, '--nogaptags', '--nogap') + infiles")
+    from_wav_multi_cmd = Expr("(encoder, '--quiet') + encopts + ('--noreplaygain', '--nogapout', outdir, '--nogaptags', '--nogap') + infiles")
     calc_replaygain_cmd = Expr("(replaygain, '-q', '-o', '-s', 's')+files")
 
     @staticmethod
@@ -234,8 +231,8 @@ class OggVorbisCodec(Codec):
 
 class PipeManager(object):
     __slots__ = 'pipes', 'pipedir', 'count', 'prefix', 'suffix'
-    def __init__(self, base=None, prefix='', suffix=''):
-        self.pipedir = base
+    def __init__(self, prefix='', suffix=''):
+        self.pipedir = None
         self.prefix = prefix
         self.suffix = suffix
         self.pipes = set()
@@ -244,8 +241,8 @@ class PipeManager(object):
     def create_dir(self):
         if self.pipedir is None:
             self.pipedir = os.path.abspath(Config['workdir'] or Config['base'])
-        self.pipedir = mkdtemp(prefix='audiomangler_work_', dir=self.pipedir)
-        atexit.register(self.cleanup)
+            self.pipedir = mkdtemp(prefix='audiomangler_work_', dir=self.pipedir)
+            atexit.register(self.cleanup)
 
     def get_pipes(self, count=1):
         result = []
@@ -273,8 +270,8 @@ class PipeManager(object):
 
 class FileManager(object):
     __slots__ = 'files', 'filedir', 'count', 'prefix', 'suffix'
-    def __init__(self, base=None, prefix='', suffix=''):
-        self.filedir = base
+    def __init__(self, prefix='', suffix=''):
+        self.filedir = None
         self.prefix = prefix
         self.suffix = suffix
         self.files = set()
@@ -297,8 +294,8 @@ class FileManager(object):
             elif not workdir:
                 workdir = basedir
             self.filedir = workdir
-        self.filedir = mkdtemp(prefix='audiomangler_work_', dir=self.filedir)
-        atexit.register(self.cleanup)
+            self.filedir = mkdtemp(prefix='audiomangler_work_', dir=self.filedir)
+            atexit.register(self.cleanup)
 
     def get_files(self, count=1):
         result = []
@@ -325,6 +322,7 @@ class FileManager(object):
 
 pipe_manager = PipeManager(prefix='pipe', suffix='.wav')
 file_manager = FileManager(prefix='out')
+
 
 def transcode_track(dtask, etask, sem):
     etask.run()
@@ -471,12 +469,130 @@ def transcode_set(targetcodec, fileset, targetfiles, alsem, trsem, workdirs, wor
         if alsem:
             alsem.release()
 
+@generator_task
+def album_transcode_one(fileset, targetcodec, ignorefiles):
+    pipes = pipe_manager.get_pipes(len(fileset))
+    outfiles = [os.path.join(file_manager.filedir, targetcodec._conv_out_filename(os.path.split(pipe)[0])) for pipe in pipes]
+    tasks = []
+    for file_, pipe in zip(fileset, pipes):
+        tasks.append(get_codec(f).to_wav_pipe(file_.filename, pipe))
+    tasks.append(targetcodec.from_wav_multi(file_manager.filedir, pipes, ()))
+    yield GroupTask(tasks)
+    newreplaygain = False
+    metas = []
+    for file in fileset:
+        meta = file.meta.copy()
+        if not (file.lossless and targetcodec.lossless):
+            for key in rg_keys:
+                if key in meta:
+                    del meta[key]
+        for key in rg_keys:
+            if key not in meta:
+                newreplaygain = True
+                break
+        metas.append(meta)
+    if targetcodec.has_replaygain:
+        metas = (yield targetcodec.add_replaygain(outfiles, metas)) or metas
+    outfile_objs = []
+    fromdir = set()
+    sourcefiles = set()
+    sourcepaths = []
+    for meta, outfile in zip(metas, outfiles):
+        fromdirs.add(metas['dir'])
+        sourcefiles.add(metas['name'])
+        sourcepaths.append(metas['path'])
+        outfile_obj = File(outfile)
+        meta.apply(file_obj)
+        outfile_obj.save()
+        outfile_objs.append(outfile_obj)
+    if len(fromdir) == 1:
+        fromdir = fromdir.pop()
+    else:
+        fromdir = False
+    rename_files(outfile_objs, fromdir, ignorefiles, sourcepaths, 'copy')
+
+def album_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
+    print allowedcodecs
+    ignorefiles = frozenset(reduce(set.__or__, (set(f.meta['path'] for f in s) for s in sets), set()))
+    bg_tasks = set()
+    copy_queue = set()
+    for album in sets:
+        if all(t.type_ in allowedcodecs and t.has_replaygain() for t in album):
+            print album
+            raise StopIteration
+
+def copy_rename_files(files, fromdir=None, ignorefiles=None, sourcepaths=None, op='move'):
+    op_func = globals()[op]
+    track_op_func = globals()[op] if sourcepaths else move
+    op_track = 'move' if op == 'move' else 'transcode' if sourcepaths else 'copy'
+    if fromdir is None:
+        fromdir = set(file.meta['dir'] for file in files)
+        if len(fromdir) == 1:
+            fromdir = fromdir.pop()
+            sourcefiles = frozenset(f['name'] for f in files)
+        else:
+            fromdir = None
+    if not sourcepaths:
+        sourcepaths = (None,) * len(files)
+    dstdirs = set()
+    for file_obj, src_path in zip(files, sourcepaths):
+        src = file_obj.filename
+        dst = util.fsencode(file_obj.format())
+        if 'type' in file_obj:
+            dst = '%s.%s' % (dst, file_obj['type'])
+        src_p = util.fsdecode(src_path or src)
+        dst_p = util.fsdecode(dst)
+        if src == dst:
+            msg(consoleformat=u"  skipping %(src_p)s, already named correctly",
+                format="skip: %(src)r",
+                src_p=srcp_p, src=src_path or src, loglevel=INFO)
+            continue
+        dstdir = os.path.split(dst)[0]
+        if dstdir not in dstdirs and dstdir != file_obj.meta['dir']:
+            try:
+                os.makedirs(dstdir)
+            except OSError, e:
+                if e.errno != errno.EEXIST or not os.path.isdir(dstdir):
+                    raise
+            dstdirs.add(dstdir)
+        msg(consoleformat=u"  %(src_p)s -> %(dst_p)s",
+            format="%(op)s: %(src)r, %(dst)r",
+            src=src_path or src, dst=dst, src_p=src_p, dst_p=dst_p, op=op_track, loglevel=INFO)
+        op_track_func(src, dst)
+        if fromdir and len(dstdirs) == 1:
+            dstdir = dstdirs.pop()
+            for file in os.listdir(fromdir):
+                src = os.path.join(fromdir, file)
+                dst = os.path.join(dstdir, file)
+                src_p = util.fsdecode(src)
+                dst_p = util.fsdecode(dst)
+            msg(consoleformat=u"  %(src_p)s -> %(dst_p)s",
+                format="%(op)s: %(src)r, %(dst)r", src=src, dst=dst,
+                src_p=src_p, dst_p=dst_p, op=op, loglevel=INFO)
+            op_func(src, dst)
+            if(op == 'move'):
+                while len(os.listdir(fromdir)) == 0:
+                    fromdirp = util.fsdecode(fromdir)
+                    msg(consoleformat=u"  remove empty directory: %(fromdirp)s",
+                        format="rmdir: %(fromdir)r",
+                        fromdir=fromdir, fromdirp=fromdirp, loglevel=INFO)
+                    try:
+                        os.rmdir(fromdir)
+                    except Exception:
+                        break
+                    newdir = os.path.split(fromdir)[0]
+                    if newdir != fromdir:
+                        fromdir = newdir
+                    else:
+                        break
+        else:
+            if onsplit == 'warn':
+                msg(consoleformat=u"WARNING: tracks in %(dir_p)s were placed in or %(op)s from different directories, other files may be left in the source directory",
+                    format="split: %(dir_)r",
+                    dir_=dir_, dir_p=dir_p, op={'move':'moved', 'copy':'copied'}, loglevel=WARNING)
+
 def sync_sets(sets=[], targettids=()):
-    try:
-        semct = int(Config['jobs'])
-    except (ValueError, TypeError):
-        semct = 1
-    bgtasks = set()
+    tidexpr = Expr(Config['trackid'])
     targetcodec = Config['type']
     if ',' in targetcodec:
         allowedcodecs = targetcodec.split(',')
@@ -485,30 +601,35 @@ def sync_sets(sets=[], targettids=()):
     else:
         allowedcodecs = set((targetcodec,))
     targetcodec = get_codec(targetcodec)
-    workdir = Config['workdir'] or Config['base']
-    workdir = mkdtemp(dir=workdir, prefix='audiomangler_work_')
-    if targetcodec._from_wav_pipe:
-        if len(sets) > semct * 2:
-            alsem = BoundedSemaphore(semct)
-            trsem = None
-        else:
-            trsem = BoundedSemaphore(semct)
-            alsem = None
-    elif targetcodec._from_wav_multi:
-        trsem = None
-        alsem = BoundedSemaphore(semct)
-    numpipes = max(len(s) for s in sets)
-    workdirs = set()
-    workdirs_l = RLock()
-    for n in range(semct):
-        w = os.path.join(workdir, "%02d" % n)
-        os.mkdir(w)
-        pipes = []
-        for m in range(numpipes):
-            pipes.append(os.path.join(w, "%02d.wav"%m))
-            os.mkfifo(pipes[-1])
-        pipes = tuple(pipes)
-        workdirs.add((w, pipes))
+    postadd = {'type':targetcodec.type_, 'ext':targetcodec.ext}
+    dstdirs = set()
+    onsplit = Config['onsplit']
+    newsets = []
+    while sets:
+        fileset = sets.pop()
+        srcs = set(file.meta['dir'] for file in fileset)
+        dsts = set(os.path.split(file.format(postadd=() if file.type_ in allowedcodecs else postadd))[0] for file in fileset)
+        dsts = tuple(dsts)
+        if onsplit == 'abort':
+            if len(dsts) > 1:
+                fatal(consoleformat=u"tracks in %(src)s would be placed in different target directories, aborting\nset onsplit to 'warn' or 'ignore' to proceed anyway",
+                    format="split: {src:%(src)r", src=srcs.pop(), nologerror=1)
+            if len(srcs) > 1:
+                fatal(consoleformat=u"tracks in from directories %(src)s would be placed in target directory %(dst)r, aborting\nset onsplit to 'warn' or 'ignore' to proceed anyway",
+                    format="split: %(src)r", src=tuple(srcs), dst=dsts[0], nologerror=1)
+            if dsts[0] in dstdirs:
+                fatal(consoleformat=u"tracks in %(src)s would be placed in %(dst)s, which is already the target for other tracks, aborting\nset onsplit to 'warn' or 'ignore' to proceed anyway",
+                    format="split: %(src)r", src=tuple(srcs), dst=dsts[0], nologerror=1)
+        dstdirs.add(dsts[0])
+        if any(file.meta.evaluate(tidexpr) not in targettids for file in fileset):
+            newsets.append(fileset)
+    sets = newsets
+    if targetcodec.has_from_wav_pipe:
+        generator = track_transcode_generator(sets, targettids, allowedcodecs, targetcodec)
+    elif targetcodec.has_from_wav_multi:
+        generator = album_transcode_generator(sets, targettids, allowedcodecs, targetcodec)
+    return PoolTask(generator(sets, targettids, allowedcodecs, targetcodec))
+    
     for fileset in sets:
         if all(file_.type_ in allowedcodecs for file_ in fileset):
             targetfiles = [f.format() for f in fileset]
