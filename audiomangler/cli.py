@@ -98,7 +98,7 @@ def rename(*args):
             if src == dst:
                 msg(consoleformat=u"  skipping %(src_p)s, already named correctly",
                     format="skip: %(src)r",
-                    src_p=srcp_p, src=src, loglevel=INFO)
+                    src_p=src_p, src=src, loglevel=INFO)
                 continue
             dstdir = os.path.split(dst)[0]
             if dstdir not in dstdirs and dstdir != dir_:
