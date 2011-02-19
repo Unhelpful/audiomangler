@@ -125,7 +125,10 @@ def scan(items, groupby = None, sortby = None, trackid = None):
                 else:
                     newcached = {'tracks':[], 'dirs':[], 'files':[]}
                     newcached['key'] = (dst.st_ino, dst.st_mtime)
-                    paths = (os.path.join(path, f) for f in sorted(os.listdir(path)))
+                    try:
+                        paths = (os.path.join(path, f) for f in sorted(os.listdir(path)))
+                    except OSError:
+                        continue
                     for filename in paths:
                         if filename in scanned:
                             continue
