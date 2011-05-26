@@ -30,6 +30,11 @@ if 'twisted.internet.reactor' not in sys.modules:
 
 from twisted.internet import reactor
 
+try:
+    from twisted.internet.processes import deferToProcess as callDeferred
+except ImportError:
+    from twisted.internet.threads import deferToThread as callDeferred
+
 @decorator
 def background_task(func, self, *args, **kwargs):
     self._register()
@@ -99,6 +104,18 @@ class BaseTask(object):
             if not self.__bg_tasks:
                 reactor.stop()
         return out
+
+class FuncTask(BaseTask):
+    "Task that calls a Python function with the specified arguments when run."
+    __slots__ = 'func', 'func_deferred', 'kwargs'
+    def __init__(self, func, *args, **kwargs):
+        self.func = func
+        self.kwargs = kwargs
+        super(FuncTask, self).__init__(*args) 
+
+    def run(self):
+        self.func_deferred = callDeferred(self.func, *self.args, **self.kwargs)
+        self.func_deferred.chainDeferred(self.deferred)
 
 class CLIProcessProtocol(protocol.ProcessProtocol):
     "Support class for CLITask, saving output from the spawned process and triggering task callbacks on exit."
@@ -309,6 +326,5 @@ class PoolTask(BaseSetTask):
         return out
 
 
-FuncTask=None
 TaskSet=None
 __all__ = []
