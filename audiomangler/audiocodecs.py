@@ -23,11 +23,13 @@ from subprocess import Popen, PIPE
 from mutagen import FileType
 from audiomangler.config import Config
 from audiomangler.tag import NormMetaData
-from audiomangler.task import CLITask, generator_task
+from audiomangler.task import CLITask, PoolTask, FuncTask, GroupTask, generator_task
 from audiomangler.expression import Expr, Format
 from audiomangler import util
+import errno
 from audiomangler.util import ClassInitMeta
 from mutagen import File
+from collections import deque
 from audiomangler.logging import *
 
 codec_map = {}
@@ -51,7 +53,7 @@ class Codec(object):
 
     @classmethod
     def from_wav_multi(cls, outdir, infiles, outfiles):
-        if not hasattr('from_wav_multi_cmd'):
+        if not hasattr(cls, 'from_wav_multi_cmd'):
             return None
         encopts = Config['encopts']
         if not encopts:
@@ -67,7 +69,7 @@ class Codec(object):
            'encopts':encopts,
            'encoder':cls.encoder
         })
-        return CLITask(args=args, stderr=sys.stderr, background=True)
+        return CLITask(*args)
 
     @classmethod
     def from_wav_pipe(cls, infile, outfile):
@@ -88,11 +90,9 @@ class Codec(object):
             'encoder': cls.encoder
         }
         args = cls.from_wav_pipe_cmd.evaluate(env)
-        print args
         stdin = '/dev/null'
         if hasattr(cls, '_from_wav_pipe_stdin'):
             stdin = cls._from_wav_pipe_stdin.evaluate(env)
-            print args
         return CLITask(*args, stdin=stdin)
 
     @classmethod
@@ -107,10 +107,10 @@ class Codec(object):
            'decoder':cls.decoder
         }
         args = cls.to_wav_pipe_cmd.evaluate(env)
-        stdout = '/dev/null'
+        stdout = 'w:/dev/null'
         if hasattr(cls, 'to_wav_pipe_stdout'):
             stdout = 'w:' + cls.to_wav_pipe_stdout.evaluate(env)
-        return CLITask(args=args, stdout=stdout)
+        return CLITask(*args, stdout=stdout)
 
     @classmethod
     @generator_task
@@ -128,7 +128,7 @@ class Codec(object):
             tracks, album = cls.calc_replaygain(output)
             if metas:
                 for meta, track_gain in zip(metas, tracks):
-                    NormMetaData(track_gain + album).apply(meta)
+                    meta.update(track_gain + album)
                 yield metas
             else:
                 file_objs = [File(f) for f in files]
@@ -285,7 +285,6 @@ class FileManager(object):
             basedir = Config['base']
             if basedir:
                 basedir = os.path.abspath(basedir)
-            print "%r, %r" % (workdir, basedir)
             if workdir is None or workdir == basedir:
                 global pipe_manager
                 pipe_manager.create_dir()
@@ -323,160 +322,16 @@ class FileManager(object):
 pipe_manager = PipeManager(prefix='pipe', suffix='.wav')
 file_manager = FileManager(prefix='out')
 
-
-def transcode_track(dtask, etask, sem):
-    etask.run()
-    dtask.run()
-    etask.wait()
-    if sem:
-        sem.release()
-
-def check_and_copy_cover(fileset, targetfiles):
-    cover_sizes = Config['cover_sizes']
-    if not cover_sizes:
-        return
-    cover_out_filename = Config['cover_out_filename']
-    if not cover_out_filename:
-        return
-    cover_out_filename = Format(cover_out_filename)
-    cover_sizes = cover_sizes.split(',')
-    covers_loaded = {}
-    covers_written = {}
-    outdirs = set()
-    cover_filenames = Config['cover_filenames']
-    if cover_filenames:
-        cover_filenames = cover_filenames.split(',')
-    else:
-        cover_filenames = ()
-    cover_out_filenames = [cover_out_filename.evaluate({'size':s}) for s in cover_sizes]
-    for (infile, targetfile) in zip(fileset, targetfiles):
-        outdir = os.path.split(targetfile)[0]
-        if outdir in outdirs: continue
-        if all(os.path.isfile(os.path.join(outdir, filename) for filename in cover_out_filenames)):
-            outdirs.add(outdir)
-            continue
-        i = None
-        for filename in (os.path.join(infile.meta['dir'], file_) for file_ in cover_filenames):
-            try:
-                d = open(filename).read()
-                i = Image.open(StringIO(d))
-                i.load()
-            except Exception:
-                continue
-            if i: break
-        if not i:
-            tags = [(value.type, value) for key, value in infile.tags.items()
-                if key.startswith('APIC') and hasattr(value, 'type')
-                and value.type in (0, 3)]
-            tags.sort(None, None, True)
-            for t, value in tags:
-                i = None
-                try:
-                    d = value.data
-                    i = Image.open(StringIO(d))
-                    i.load()
-                    break
-                except Exception:
-                    continue
-        if not i: continue
-        for s in cover_sizes:
-            try:
-                s = int(s)
-            except Exception:
-                continue
-            w, h = i.size
-            sc = 1.0*s/max(w, h)
-            w = int(w*sc+0.5)
-            h = int(h*sc+0.5)
-            iw = i.resize((w, h), Image.ADAPTIVE)
-            filename = os.path.join(
-               outdir, cover_out_filename.evaluate({'size':s})
-            )
-            print "save cover %s" % filename
-            iw.save(filename)
-        outdirs.add(outdir)
-
 rg_keys = 'replaygain_track_gain', 'replaygain_track_peak', 'replaygain_album_gain', 'replaygain_album_peak'
-def transcode_set(targetcodec, fileset, targetfiles, alsem, trsem, workdirs, workdirs_l):
-    try:
-        if not fileset:
-            workdirs_l = None
-            return
-        workdirs_l.acquire()
-        workdir, pipefiles = workdirs.pop()
-        workdirs_l.release()
-        outfiles = map(targetcodec._conv_out_filename, pipefiles[:len(fileset)])
-        if targetcodec._from_wav_pipe:
-            for i, p, o in zip(fileset, pipefiles, outfiles):
-                bgprocs = set()
-                dtask = get_codec(i).to_wav_pipe(i.meta['path'], p)
-                etask = targetcodec.from_wav_pipe(p, o)
-                # FuncTask removed
-                #ttask = FuncTask(background=True, target=transcode_track,
-                   #args=(dtask, etask, trsem)
-                #)
-                if trsem:
-                    trsem.acquire()
-                    bgprocs.add(ttask.run())
-                else:
-                    ttask.runfg()
-            for task in bgprocs:
-                task.wait()
-        elif targetcodec._from_wav_multi:
-            etask = targetcodec.from_wav_multi(
-               workdir, pipefiles[:len(fileset)], outfiles
-            )
-            etask.run()
-            for i, o in zip(fileset, pipefiles):
-                task = get_codec(i).to_wav_pipe(i.meta['path'], o)
-                task.run()
-            etask.wait()
-        dirs = set()
-        metas = []
-        newreplaygain = False
-        for i, o in zip(fileset, outfiles):
-            meta = i.meta.copy()
-            if not (i.lossless and targetcodec.lossless):
-                for key in rg_keys:
-                    if key in meta:
-                        del meta[key]
-                newreplaygain = True
-            if not newreplaygain:
-                for key in rg_keys:
-                    if key not in meta:
-                        newreplaygain=True
-                        break
-            metas.append(meta)
-        if newreplaygain and targetcodec._replaygain:
-            targetcodec.add_replaygain(outfiles, metas)
-        for i, m, o, t in zip(fileset, metas, outfiles, targetfiles):
-            o = File(o)
-            m.apply(o)
-            o.save()
-            targetdir = os.path.split(t)[0]
-            if targetdir not in dirs:
-                dirs.add(targetdir)
-                if not os.path.isdir(targetdir):
-                    os.makedirs(targetdir)
-            print "%s -> %s" %(i.filename, t)
-            util.move(o.filename, t)
-        check_and_copy_cover(fileset, targetfiles)
-    finally:
-        if workdirs_l:
-            workdirs_l.acquire()
-            workdirs.add((workdir, pipefiles))
-            workdirs_l.release()
-        if alsem:
-            alsem.release()
 
 @generator_task
-def album_transcode_one(fileset, targetcodec, ignorefiles):
+def album_transcode_one(fileset, targetcodec):
+    file_manager.create_dir()
     pipes = pipe_manager.get_pipes(len(fileset))
-    outfiles = [os.path.join(file_manager.filedir, targetcodec._conv_out_filename(os.path.split(pipe)[0])) for pipe in pipes]
-    tasks = []
+    outfiles = [os.path.join(file_manager.filedir, targetcodec._conv_out_filename(os.path.split(pipe)[1])) for pipe in pipes]
+    tasks = [targetcodec.from_wav_multi(file_manager.filedir, pipes, ())]
     for file_, pipe in zip(fileset, pipes):
-        tasks.append(get_codec(f).to_wav_pipe(file_.filename, pipe))
-    tasks.append(targetcodec.from_wav_multi(file_manager.filedir, pipes, ()))
+        tasks.append(get_codec(file_).to_wav_pipe(file_.filename, pipe))
     yield GroupTask(tasks)
     newreplaygain = False
     metas = []
@@ -498,54 +353,70 @@ def album_transcode_one(fileset, targetcodec, ignorefiles):
     sourcefiles = set()
     sourcepaths = []
     for meta, outfile in zip(metas, outfiles):
-        fromdirs.add(metas['dir'])
-        sourcefiles.add(metas['name'])
-        sourcepaths.append(metas['path'])
+        fromdir.add(meta['dir'])
+        sourcefiles.add(meta['name'])
+        sourcepaths.append(meta['path'])
         outfile_obj = File(outfile)
-        meta.apply(file_obj)
+        meta.apply(outfile_obj)
         outfile_obj.save()
         outfile_objs.append(outfile_obj)
     if len(fromdir) == 1:
         fromdir = fromdir.pop()
+        ignorefiles = frozenset(sourcefiles)
     else:
         fromdir = False
-    rename_files(outfile_objs, fromdir, ignorefiles, sourcepaths, 'copy')
+        ignorefiles = False
+    copy_rename_files(outfile_objs, fromdir, ignorefiles, sourcepaths, 'move')
+    pipe_manager.free_pipes(pipes)
+
+def deque_queue(d):
+    while len(d):
+        yield d.popleft()
 
 def album_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
-    print allowedcodecs
     ignorefiles = frozenset(reduce(set.__or__, (set(f.meta['path'] for f in s) for s in sets), set()))
     bg_tasks = set()
-    copy_queue = set()
+    copy_task = None
+    copy_queue = deque()
     for album in sets:
         if all(t.type_ in allowedcodecs and t.has_replaygain() for t in album):
-            print album
-            raise StopIteration
+            copy_queue.append(FuncTask(copy_rename_files, album, op='copy'))
+            if (copy_task and copy_task.deferred.called):
+                copy_task = None
+            if (copy_task is None):
+                copy_task = PoolTask(deque_queue(copy_queue), jobs=1)
+                copy_task.queue()
+        else:
+            yield album_transcode_one(album, targetcodec)
+            
+        
 
 def copy_rename_files(files, fromdir=None, ignorefiles=None, sourcepaths=None, op='move'):
-    op_func = globals()[op]
-    track_op_func = globals()[op] if sourcepaths else move
-    op_track = 'move' if op == 'move' else 'transcode' if sourcepaths else 'copy'
+    track_op_func = getattr(util, op)
+    op_func = util.copy if sourcepaths else getattr(util, op)
+    op_track = 'transcode' if sourcepaths else op
     if fromdir is None:
-        fromdir = set(file.meta['dir'] for file in files)
+        fromdir = set(f.meta['dir'] for f in files)
         if len(fromdir) == 1:
             fromdir = fromdir.pop()
-            sourcefiles = frozenset(f['name'] for f in files)
+            sourcefiles = frozenset(f.meta['name'] for f in files)
         else:
             fromdir = None
     if not sourcepaths:
-        sourcepaths = (None,) * len(files)
+        sourcepaths = [file_obj.meta['path'] for file_obj in files]
+    if ignorefiles is None:
+        ignorefiles = frozenset([file_obj.meta['name'] for file_obj in files])
     dstdirs = set()
-    for file_obj, src_path in zip(files, sourcepaths):
-        src = file_obj.filename
+    for file_obj, src in zip(files, sourcepaths):
         dst = util.fsencode(file_obj.format())
         if 'type' in file_obj:
             dst = '%s.%s' % (dst, file_obj['type'])
-        src_p = util.fsdecode(src_path or src)
+        src_p = util.fsdecode(src)
         dst_p = util.fsdecode(dst)
         if src == dst:
             msg(consoleformat=u"  skipping %(src_p)s, already named correctly",
                 format="skip: %(src)r",
-                src_p=srcp_p, src=src_path or src, loglevel=INFO)
+                src_p=srcp_p, src=src, loglevel=INFO)
             continue
         dstdir = os.path.split(dst)[0]
         if dstdir not in dstdirs and dstdir != file_obj.meta['dir']:
@@ -555,17 +426,20 @@ def copy_rename_files(files, fromdir=None, ignorefiles=None, sourcepaths=None, o
                 if e.errno != errno.EEXIST or not os.path.isdir(dstdir):
                     raise
             dstdirs.add(dstdir)
+        if op_track == 'transcode':
+            src = file_obj.meta['path']
         msg(consoleformat=u"  %(src_p)s -> %(dst_p)s",
             format="%(op)s: %(src)r, %(dst)r",
-            src=src_path or src, dst=dst, src_p=src_p, dst_p=dst_p, op=op_track, loglevel=INFO)
-        op_track_func(src, dst)
-        if fromdir and len(dstdirs) == 1:
-            dstdir = dstdirs.pop()
-            for file in os.listdir(fromdir):
-                src = os.path.join(fromdir, file)
-                dst = os.path.join(dstdir, file)
-                src_p = util.fsdecode(src)
-                dst_p = util.fsdecode(dst)
+            src=src, dst=dst, src_p=src_p, dst_p=dst_p, op=op_track, loglevel=INFO)
+        track_op_func(src, dst)
+    if fromdir and len(dstdirs) == 1:
+        dstdir = dstdirs.pop()
+        for file in os.listdir(fromdir):
+            src = os.path.join(fromdir, file)
+            dst = os.path.join(dstdir, file)
+            src_p = util.fsdecode(src)
+            dst_p = util.fsdecode(dst)
+            if file in ignorefiles: continue
             msg(consoleformat=u"  %(src_p)s -> %(dst_p)s",
                 format="%(op)s: %(src)r, %(dst)r", src=src, dst=dst,
                 src_p=src_p, dst_p=dst_p, op=op, loglevel=INFO)
@@ -585,11 +459,11 @@ def copy_rename_files(files, fromdir=None, ignorefiles=None, sourcepaths=None, o
                         fromdir = newdir
                     else:
                         break
-        else:
-            if onsplit == 'warn':
-                msg(consoleformat=u"WARNING: tracks in %(dir_p)s were placed in or %(op)s from different directories, other files may be left in the source directory",
-                    format="split: %(dir_)r",
-                    dir_=dir_, dir_p=dir_p, op={'move':'moved', 'copy':'copied'}, loglevel=WARNING)
+    else:
+        if onsplit == 'warn':
+            msg(consoleformat=u"WARNING: tracks in %(dir_p)s were placed in or %(op)s from different directories, other files may be left in the source directory",
+                format="split: %(dir_)r",
+                dir_=dir_, dir_p=dir_p, op={'move':'moved', 'copy':'copied'}, loglevel=WARNING)
 
 def sync_sets(sets=[], targettids=()):
     tidexpr = Expr(Config['trackid'])
@@ -624,60 +498,12 @@ def sync_sets(sets=[], targettids=()):
         if any(file.meta.evaluate(tidexpr) not in targettids for file in fileset):
             newsets.append(fileset)
     sets = newsets
-    if targetcodec.has_from_wav_pipe:
-        generator = track_transcode_generator(sets, targettids, allowedcodecs, targetcodec)
+    if False and targetcodec.has_from_wav_pipe:
+        task_generator = track_transcode_generator
     elif targetcodec.has_from_wav_multi:
-        generator = album_transcode_generator(sets, targettids, allowedcodecs, targetcodec)
-    return PoolTask(generator(sets, targettids, allowedcodecs, targetcodec))
-    
-    for fileset in sets:
-        if all(file_.type_ in allowedcodecs for file_ in fileset):
-            targetfiles = [f.format() for f in fileset]
-            if not all(file_.tid in targettids for file_ in fileset):
-                print "copying files"
-                dirs = set()
-                for i in fileset:
-                    t = i.format()
-                    targetdir = os.path.split(t)[0]
-                    if targetdir not in dirs:
-                        dirs.add(targetdir)
-                        if not os.path.isdir(targetdir):
-                            os.makedirs(targetdir)
-                    print "%s -> %s" % (i.filename, t)
-                    util.copy(i.filename, t)
-                codecs = set((get_codec(f) for f in fileset))
-                codec = codecs.pop()
-                if codec and not codecs and codec._replaygain:
-                    codec.add_replaygain(targetfiles)
-            check_and_copy_cover(fileset, targetfiles)
-            continue
-        postadd = {'type':targetcodec.type_, 'ext':targetcodec.ext}
-        targetfiles = [f.format(postadd=postadd)for f in fileset]
-        if all(file_.tid in targettids for file_ in fileset):
-            check_and_copy_cover(fileset, targetfiles)
-            continue
-        if alsem:
-            alsem.acquire()
-            for task in list(bgtasks):
-                if task.poll():
-                    bgtasks.remove(task)
-        # FuncTask use needs rewrite
-        #task = FuncTask(
-           #background=True, target=transcode_set, args=(
-              #targetcodec, fileset, targetfiles, alsem, trsem, workdirs,
-              #workdirs_l
-        #))
-        if alsem:
-            bgtasks.add(task.run())
-        else:
-            task.runfg()
-    for task in bgtasks:
-        task.wait()
-    for w, ps in workdirs:
-        for p in ps:
-            os.unlink(p)
-        os.rmdir(w)
-    os.rmdir(workdir)
+        task_generator = album_transcode_generator
+    PoolTask(task_generator(sets, targettids, allowedcodecs, targetcodec)).run()
+    return
 
 def get_codec(item):
     if isinstance(item, FileType):

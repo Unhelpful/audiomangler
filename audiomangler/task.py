@@ -12,6 +12,7 @@ import sys
 import inspect
 from types import FunctionType, GeneratorType
 from twisted.internet import defer, protocol, error, fdesc
+from twisted.internet.threads import deferToThread
 from twisted.python import failure
 from functools import wraps
 from multiprocessing import cpu_count
@@ -41,6 +42,11 @@ def background_task(func, self, *args, **kwargs):
     reactor.callWhenRunning(func, self, *args, **kwargs)
     if not reactor.running:
         reactor.run()
+
+@decorator
+def queue_task(func, self, *args, **kwargs):
+    self._register()
+    reactor.callWhenRunning(func, self, *args, **kwargs)
 
 #def background_task(func):
     #argspec = inspect.getargspec(func)
@@ -72,13 +78,18 @@ class BaseTask(object):
     __metaclass__ = ClassInitMeta
     @classmethod
     def __classinit__(cls, name, bases, cls_dict):
-        run = getattr(cls, 'run', None)
-        if run:
-            cls._run = run
-            run = background_task(run.im_func)
+        _run = getattr(cls, 'run', None)
+        if _run:
+            cls._run = _run
+            run = background_task(_run.im_func)
             if not run.__doc__:
-                run.__doc__ = "Start the task, returning status via <task>.deferred callbacks when the task completes."
+                run.__doc__ = "Start the task, returning status via <task>.deferred callbacks when the task completes, and start reactor if not running"
             cls.run = run
+            queue = queue_task(_run.im_func)
+            if not queue.__doc__:
+                queue.__doc__ = "Queue the task to be started by reactor, returning status via <task>.deferred callbacks when the task completes."
+            cls.queue = queue
+
 
     __slots__ = 'deferred', 'args', 'parent'
     __bg_tasks = set()
@@ -91,6 +102,9 @@ class BaseTask(object):
         self.__class__.__bg_tasks.add(self)
 
     def _complete(self, out):
+        if isinstance(out, failure.Failure):
+            import traceback
+            traceback.print_tb(out.getTracebackObject())
         if self.deferred.callbacks:
             self.deferred.addBoth(self._complete)
             return out
@@ -149,7 +163,6 @@ class CLITask(BaseTask):
     def run(self, stdin=None, stdout=None, stderr=None):
         "Start the task, returning status via <task>.deferred callbacks when the task completes. The keyword arguments stdin, stdout, and stderr may be used to override the ones provided at initialization."
         childFDs = {}
-        closeFDs = []
         if stdin is not None:
             childFDs[0] = stdin
         else:
@@ -162,12 +175,25 @@ class CLITask(BaseTask):
             childFDs[2] = stderr
         else:
             childFDs[2] = getattr(self, 'stderr', 'r')
+        d = deferToThread(self._setup, childFDs)
+        d.addCallback(self._spawn)
+        d.addErrback(self._fail)
+
+    def _setup(self, childFDs):
+        closeFDs = []
         for key, value in childFDs.items():
             if isinstance(value, basestring) and (value.startswith('w:') or value.startswith('r:')):
                 mode, path = value.split(':', 1)
                 mode = os.O_WRONLY|os.O_CREAT if mode == 'w' else os.O_RDONLY
                 closeFDs.append(os.open(path, mode))
                 childFDs[key] = closeFDs[-1]
+        return (childFDs, closeFDs)
+
+    def _fail(self, failure):
+        err(failure)
+
+    def _spawn(self, FDs):
+        childFDs, closeFDs = FDs
         self.proc = reactor.spawnProcess(CLIProcessProtocol(self), executable=self.args[0], args=self.args, childFDs = childFDs)
         for fd in closeFDs:
             os.close(fd)
@@ -175,18 +201,16 @@ class CLITask(BaseTask):
 class BaseSetTask(BaseTask):
     "Base class for Tasks that run a set of other Tasks."
     slots = 'subs', 'main'
-    def __init__(self, *args, **kwargs):
+    def __init__(self, tasks, **kwargs):
         super(BaseSetTask, self).__init__()
         self.subs = set()
         if 'main' in kwargs:
             main = kwargs.pop('main')
             assert isinstance(main, (int, BaseTask))
             if isinstance(main, int):
-                main = args[main]
+                main = tasks[main]
             self.main = main
-        if args and isinstance(args[0], GeneratorType):
-            args = args[0]
-        self.args = args
+        self.args = tasks
 
     def run_sub(self, sub, *args, **kwargs):
         self.subs.add(sub)
@@ -200,12 +224,12 @@ class BaseSetTask(BaseTask):
 class CLIPipelineTask(BaseSetTask):
     "Task comprised of a series of subprocesses, with stdout of each connected to stdin of the previous one. The keyword arguments stdin, stdout, and stderr may be used to provide a file or file descriptor for the stdin of the first process in the pipeline, or the stdout and stderr of the last process."
     __slots__ = 'tasks', 'stdin', 'stdout', 'stderr'
-    def __init__(self, *args, **kwargs):
+    def __init__(self, tasks, **kwargs):
         self.tasks = []
         for arg in 'stdin', 'stdout', 'stderr':
             if arg in kwargs:
                 setattr(self, arg, kwargs[arg])
-        super(CLIPipelineTask, self).__init__(*args)
+        super(CLIPipelineTask, self).__init__(tasks)
 
     def run(self, stdin=None, stdout=None, stderr=None):
         "Start the task, returning status via <task>.deferred callbacks when the task completes. The keyword arguments stdin, stdout, and stderr may be used to override the ones provided at initialization."
@@ -269,9 +293,9 @@ class GeneratorTask(BaseSetTask):
             if isinstance(newout, BaseTask):
                 self.run_sub(newout)
             else:
-                self.deferred.callback(out)
+                self.deferred.callback(newout)
         except StopIteration:
-            self.deferred.callback(out)
+            self.deferred.callback(None)
         except:
             err(failure.Failure())
 
@@ -291,12 +315,10 @@ class GroupTask(BaseSetTask):
 class PoolTask(BaseSetTask):
     "Task that runs at most Config['jobs'] tasks at a time from its arguments until out of tasks, then fires its callback with None. A suitable number of jobs will be chosen if Config does not specify one, and the sub-Tasks are not connected to each other in any way."
     __slots__ = 'max_tasks'
-    def __init__(self, *args):
-        self.max_tasks = int(Config.get('jobs', cpu_count()))
-        if args and isinstance(args[0], GeneratorType):
-            args = args[0]
-        args = iter(args)
-        super(PoolTask, self).__init__(args)
+    def __init__(self, tasks, **kwargs):
+        self.max_tasks = kwargs.get('jobs') or int(Config.get('jobs', cpu_count()))
+        tasks = iter(tasks)
+        super(PoolTask, self).__init__(tasks)
 
     def run(self):
         try:
