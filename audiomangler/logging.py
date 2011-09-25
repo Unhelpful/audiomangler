@@ -64,7 +64,7 @@ class FilteredConsoleLogObserver:
 
 collector = None
 logfile = None
-logout = None
+logconsole = None
 
 def get_level(level, default=ERROR):
     try:
@@ -77,6 +77,14 @@ def get_level(level, default=ERROR):
         return loglevels[level]
     except KeyError:
         return default
+
+def init_logconsole():
+    global logconsole
+    if logconsole is None:
+        try:
+            logconsole = FilteredConsoleLogObserver(Config['consolelevel'])
+            logconsole.start()
+        except: pass
 
 def err(*msg, **kwargs):
     global collector, logfile
@@ -92,18 +100,15 @@ def err(*msg, **kwargs):
                 logfile.start()
             except: pass
     kwargs['loglevel'] = ERROR
+    init_logconsole()
     if msg and isinstance(msg[0], (failure.Failure, Exception)):
         log.err(_noignore=1, *msg, **kwargs)
     else:
         log.msg(_noignore=1, *msg, **kwargs)
 
 def msg(*msg, **kwargs):
-    global logfile, logout
-    if logout is None:
-        try:
-            logout = FilteredConsoleLogObserver(Config['consolelevel'])
-            logout.start()
-        except: pass
+    global logfile
+    init_logconsole()
     kwargs.setdefault('loglevel', DEBUG)
     if kwargs['loglevel'] == ERROR:
         err(_noignore=1, *msg, **kwargs)
@@ -120,9 +125,9 @@ def fatal(*msg, **kwargs):
     sys.exit()
 
 def cleanup():
-    if logout:
+    if logconsole:
         sys.stdout.flush()
-        logout.stop()
+        logconsole.stop()
     if collector:
         collector.output.flush()
         collector.stop()
