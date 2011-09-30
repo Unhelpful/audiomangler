@@ -16,8 +16,10 @@ class FilteredFileLogObserver(log.FileLogObserver):
     def __init__(self, f, loglevel=VERBOSE):
         self.output = f
         self.loglevel = get_level(loglevel, VERBOSE)
+        print loglevels[self.loglevel]
 
     def emit(self, eventDict):
+        if 'nologerror' in eventDict: return
         if '_noignore' not in eventDict and not eventDict['isError']: return
         if eventDict.get('loglevel', DEBUG) > self.loglevel:
             return
@@ -34,7 +36,8 @@ class FilteredFileLogObserver(log.FileLogObserver):
         timeStr = self.formatTime(eventDict['time'])
         self.output.write(timeStr + ' [' + loglevels[eventDict['loglevel']].ljust(7) + '] ' + text + '\n')
 
-class FilteredConsoleLogObserver:
+class FilteredConsoleLogObserver(log.FileLogObserver):
+    timeFormat = '[%H:%M:%S] '
     def __init__(self, loglevel=INFO):
         self.loglevel = get_level(loglevel, INFO)
 
@@ -59,7 +62,8 @@ class FilteredConsoleLogObserver:
             text = (fmt % eventDict).encode(encoding, 'replace')
         else:
             text = log.textFromEventDict(eventDict)
-        sys.stdout.write(text + '\n')
+        timeStr = self.formatTime(eventDict['time'])
+        sys.stdout.write(timeStr + text + '\n')
         sys.stdout.flush()
 
 collector = None
@@ -71,12 +75,12 @@ def get_level(level, default=ERROR):
         return int(level)
     except ValueError:
         pass
-    try:
-        if isinstance(level, basestring):
-            level = level.upper()
-        return loglevels[level]
-    except KeyError:
-        return default
+    if isinstance(level, basestring):
+        level = level.upper()
+        levels = [loglevels[k] for k in loglevels.keys() if isinstance(k, basestring) and k.startswith(level)]
+        if len(levels) == 1:
+            return levels[0]
+    return default
 
 def init_logconsole():
     global logconsole

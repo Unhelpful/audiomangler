@@ -62,6 +62,7 @@ def _format(self, filename=None, base=None, preadd=(), postadd=()):
     meta.update(self.meta.flat())
     meta.update(postadd)
     filename = FileFormat(filename)
+    base = os.path.abspath(base)
     return os.path.join(base, filename.evaluate(meta))
 
 def has_replaygain(self):

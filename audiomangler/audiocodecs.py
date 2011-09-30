@@ -10,7 +10,6 @@
 import os, os.path
 import sys
 import re
-import Image
 import atexit
 try:
     from cStringIO import StringIO
@@ -29,7 +28,7 @@ from audiomangler import util
 import errno
 from audiomangler.util import ClassInitMeta
 from mutagen import File
-from collections import deque
+from collections import deque, namedtuple
 from audiomangler.logging import *
 
 codec_map = {}
@@ -69,7 +68,7 @@ class Codec(object):
            'encopts':encopts,
            'encoder':cls.encoder
         })
-        return CLITask(*args)
+        return CLITask(*args, _id="%s.from_wav_multi(%s)" % (cls.__name__, outdir))
 
     @classmethod
     def from_wav_pipe(cls, infile, outfile):
@@ -93,7 +92,7 @@ class Codec(object):
         stdin = '/dev/null'
         if hasattr(cls, '_from_wav_pipe_stdin'):
             stdin = cls._from_wav_pipe_stdin.evaluate(env)
-        return CLITask(*args, stdin=stdin)
+        return CLITask(*args, stdin=stdin, _id="%s.from_wav_pipe(%s)" % (cls.__name__, outfile))
 
     @classmethod
     def to_wav_pipe(cls, infile, outfile):
@@ -110,7 +109,7 @@ class Codec(object):
         stdout = 'w:/dev/null'
         if hasattr(cls, 'to_wav_pipe_stdout'):
             stdout = 'w:' + cls.to_wav_pipe_stdout.evaluate(env)
-        return CLITask(*args, stdout=stdout)
+        return CLITask(*args, stdout=stdout, _id="%s.to_wav_pipe(%s)" % (cls.__name__, infile))
 
     @classmethod
     @generator_task
@@ -373,9 +372,77 @@ def deque_queue(d):
     while len(d):
         yield d.popleft()
 
+class AlbumManager(object):
+    __slots__ = [ 'tasks', 'albums' ]
+    def __init__(self):
+        self.tasks = {}
+
+    def add_album(self, album):
+        return Album(album, self)
+
+    def add_task(self, task, album):
+        self.tasks[task] = album
+
+    def complete_task(task):
+        album = self.tasks.pop(task)
+        return album.complete_task(task)
+
+class Album(object):
+    __slots__ = [ 'tasks', 'album', 'outfiles', 'manager' ]
+    def __init__(self, album, manager=None):
+        self.tasks = set()
+        self.album = album
+        self.outfiles = []
+        self.manager = manager
+
+    def add_task(self, task):
+        self.tasks.add(task)
+        if self.manager:
+            self.manager.add_task(task, self)
+
+    def add_outfile(self, outfile):
+        self.outfiles.append(outfile)
+
+    def add_job(self, task, outfile):
+        self.add_task(task)
+        self.add_outfile(outfile)
+
+    def complete_task(task):
+        self.tasks.remove(task)
+        if not self.tasks:
+            return self.finalize()
+
+def track_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
+    class album_(object):
+        __slots__ = [ 'task_count', 'album', 'outfiles' ]
+    albums = {}
+    tasks = {}
+    copy_task = None
+    copy_queue = deque()
+    for album in sets:
+        if all(t.type_ in allowedcodecs and t.has_replaygain() for t in album):
+            copy_queue.append(FuncTask(copy_rename_files, album, op='copy'))
+            if (copy_task and copy_task.deferred.called):
+                copy_task = None
+            if (copy_task is None):
+                copy_task = PoolTask(deque_queue(copy_queue), jobs=1)
+                copy_task.queue()
+        else:
+            album_obj = album_()
+            album_ojb.task_count = 0
+            album_obj.album = album
+            album_obj.outfiles = []
+            for track in album:
+                outfile, = filemanager.get_files(1)
+                decoder = get_codec(file_).to_wav_pipe(file_.filename, '')
+                encoder = targetcodec.from_wav_pipe('', outfile)
+                album_obj.outfiles.append(outfile)
+                task = CLIPipelineTask([encoder, decoder])
+                tasks[task] = album_obj
+                album_obj.task_count += 1
+                completed = yield 
+
 def album_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
-    ignorefiles = frozenset(reduce(set.__or__, (set(f.meta['path'] for f in s) for s in sets), set()))
-    bg_tasks = set()
     copy_task = None
     copy_queue = deque()
     for album in sets:
@@ -388,8 +455,6 @@ def album_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
                 copy_task.queue()
         else:
             yield album_transcode_one(album, targetcodec)
-            
-        
 
 def copy_rename_files(files, fromdir=None, ignorefiles=None, sourcepaths=None, op='move'):
     track_op_func = getattr(util, op)
@@ -504,6 +569,84 @@ def sync_sets(sets=[], targettids=()):
         task_generator = album_transcode_generator
     PoolTask(task_generator(sets, targettids, allowedcodecs, targetcodec)).run()
     return
+
+dirmap_entry = namedtuple('dirmap_entry',('dirs','srcfiles'))
+def check_rename_sync(albums, dirs, mode='rename', targettids = ()):
+    targettids = frozenset(targettids)
+    if targettids:
+        tidexpr = Expr(Config['trackid'])
+    else:
+        tidexpr = None
+    dirmap = {}
+    dstpaths = {}
+    wassplit = False
+    wasconflict = False
+    onsplit = Config['onsplit']
+    onconflict = Config['onconflict']
+    if mode != 'rename':
+        targetcodec = Config['type']
+        if ',' in targetcodec:
+            allowedcodecs = targetcodec.split(',')
+            targetcodec = allowedcodecs[0]
+            allowedcodecs = set(allowedcodecs)
+        else:
+            allowedcodecs = set((targetcodec,))
+        targetcodec = get_codec(targetcodec)
+        postadd = {'type':targetcodec.type_, 'ext':targetcodec.ext}
+    else:
+        postadd = ()
+        allowedcodecs = None
+    for album in albums.values():
+        if all(track.meta.evaluate(tidexpr) in targettids for track in album):
+            continue
+        dsts = [util.fsencode(file.format(postadd=() if allowedcodecs and file.type_ in allowedcodecs else postadd)) for file in album]
+        for src, dst in zip(album, dsts):
+            srcdir = src.meta['dir']
+            dstdir = os.path.split(dst)[0]
+            curdirmap = dirmap.setdefault(srcdir, dirmap_entry(set(),set()))
+            curdirmap.dirs.add(dstdir)
+            curdirmap.srcfiles.add(src.meta['name'])
+            dstpaths.setdefault(dst, []).append(src.meta['path'])
+    for srcdir, entry in dirmap.items():
+        srcdir_p = util.fsdecode(srcdir)
+        if len(entry.dirs) > 1:
+            if onsplit == 'error':
+                err(consoleformat=u"tracks in %(src_p)s would be placed in different target directories",
+                        format="split: src:%(src)r", src_p=srcdir_p, src=srcdir)
+                wassplit = True
+        else:
+            skip = frozenset(entry.srcfiles)
+            dstdir = list(entry.dirs)[0]
+            for file_ in os.listdir(srcdir):
+                if file_ in skip: continue
+                src = os.path.join(srcdir, file_)
+                dst = os.path.join(dstdir, file_)
+                src_p = util.fsdecode(src)
+                dsp_p = util.fsdecode(dst)
+                dstpaths.setdefault(dst, []).append(src)
+    for dst,srcs in dstpaths.items():
+        if onconflict == 'error':
+            if len(srcs) > 1:
+                srcs_p = u', '.join(util.fsdecode(s) for s in srcs)
+                dst_p = util.fsdecode(dst)
+                err(consoleformat=u"files %(srcs_p)s would be copied or moved to same file %(dst_p)s",
+                        format="conflict: src: %(srcs)r, dst: %(dst)r", srcs_p=srcs_p, dst_p=dst_p, srcs=srcs, dst=dst)
+                wasconflict = True
+            elif dst == srcs[0]:
+                continue
+            if (os.path.exists(dst)):
+                srcs_p = u', '.join(util.fsdecode(s) for s in srcs)
+                dst_p = util.fsdecode(dst)
+                srcs = srcs[0] if len(srcs) == 1 else srcs
+                err(consoleformat=u"file(s) %(srcs_p)s would be copied or moved to file %(dst_p)s, which already exists",
+                        format="conflict: src: %(srcs)r, dst: %(dst)r", srcs_p=srcs_p, dst_p=dst_p, srcs=srcs, dst=dst)
+                wasconflict = True
+    if wassplit:
+        err(consoleformat="some existing directories would be split, set onsplit to 'warn' or 'ignore' to proceed anyway", nologerror=1)
+    if wasconflict:
+        err(consoleformat="some files would conflict with each other or with existing files, set onconflict to 'warn' or 'ignore' to proceed anyway", nologerror=1)
+    if wassplit or wasconflict:
+        sys.exit(1)
 
 def get_codec(item):
     if isinstance(item, FileType):

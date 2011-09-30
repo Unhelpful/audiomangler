@@ -78,7 +78,8 @@ class AMConfig(RawConfigParser):
 Config = AMConfig(
    (
       ('defaults',
-         ('onsplit', 'abort'),
+         ('onsplit', 'error'),
+         ('onconflict', 'error'),
          ('groupby',
             "first("
                 "('album', musicbrainz_albumid), "

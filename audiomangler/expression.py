@@ -16,8 +16,9 @@ from string import maketrans
 from compiler import ast
 
 _breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
-pathseptrans = unicode(maketrans('/', '_')[:48])
-pathtrans = unicode(maketrans(r'/\[]?=+<>;",*|', os.path.sep + '_' * 13)[:125])
+
+pathseptrans = dict(enumerate(unicode(maketrans('/', '_')[:48])))
+pathtrans = dict(enumerate(unicode(maketrans(r'/\[]?=+<>;",*|', os.path.sep + '_' * 13)[:125])))
 
 eval_builtins = eval_builtins.copy()
 eval_builtins.update(filter=filter, map=map, max=max, min=min, reduce=reduce, reversed=reversed, slice=slice, sorted=sorted)

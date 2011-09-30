@@ -18,16 +18,8 @@ from functools import wraps
 from multiprocessing import cpu_count
 from audiomangler.config import Config
 from audiomangler.util import ClassInitMeta
-from audiomangler.logging import err
+from audiomangler.logging import msg, err, DEBUG
 from decorator import decorator
-
-if 'twisted.internet.reactor' not in sys.modules:
-    for reactor in 'kqreactor', 'epollreactor', 'pollreactor', 'selectreactor':
-        try:
-            r = __import__('twisted.internet.' + reactor, fromlist=[reactor])
-            r.install()
-            break
-        except ImportError: pass
 
 from twisted.internet import reactor
 
@@ -39,6 +31,7 @@ except ImportError:
 @decorator
 def background_task(func, self, *args, **kwargs):
     self._register()
+    msg(consoleformat="%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
     reactor.callWhenRunning(func, self, *args, **kwargs)
     if not reactor.running:
         reactor.run()
@@ -46,7 +39,16 @@ def background_task(func, self, *args, **kwargs):
 @decorator
 def queue_task(func, self, *args, **kwargs):
     self._register()
+    msg(consoleformat="%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
     reactor.callWhenRunning(func, self, *args, **kwargs)
+
+@decorator
+def logfunc(func, self, *args, **kwargs):
+    msg(consoleformat="%(obj)r.%(fun)s start", obj=self, fun=func.func_name)
+    try:
+        return func(self, *args, **kwargs)
+    finally:
+        msg(consoleformat="%(obj)r.%(fun)s finish", obj=self, fun=func.func_name)
 
 #def background_task(func):
     #argspec = inspect.getargspec(func)
@@ -81,30 +83,33 @@ class BaseTask(object):
         _run = getattr(cls, 'run', None)
         if _run:
             cls._run = _run
-            run = background_task(_run.im_func)
+            run = background_task(logfunc(_run.im_func))
             if not run.__doc__:
                 run.__doc__ = "Start the task, returning status via <task>.deferred callbacks when the task completes, and start reactor if not running"
             cls.run = run
-            queue = queue_task(_run.im_func)
+            queue = queue_task(logfunc(_run.im_func))
             if not queue.__doc__:
                 queue.__doc__ = "Queue the task to be started by reactor, returning status via <task>.deferred callbacks when the task completes."
             cls.queue = queue
 
 
-    __slots__ = 'deferred', 'args', 'parent'
+    __slots__ = '__id', 'deferred', 'args', 'parent'
     __bg_tasks = set()
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         self.args = args
+        self.__id = kwargs.get('_id', '@%x' % id(self))
         self.deferred = defer.Deferred()
         self.deferred.addBoth(self._complete)
+
+    def __repr__(self):
+        return "%s(%s)" % (self.__class__.__name__, self.__id)
 
     def _register(self):
         self.__class__.__bg_tasks.add(self)
 
     def _complete(self, out):
         if isinstance(out, failure.Failure):
-            import traceback
-            traceback.print_tb(out.getTracebackObject())
+            err(out)
         if self.deferred.callbacks:
             self.deferred.addBoth(self._complete)
             return out
@@ -158,7 +163,8 @@ class CLITask(BaseTask):
         for arg in 'stdin', 'stdout', 'stderr':
             if arg in kwargs:
                 setattr(self, arg, kwargs[arg])
-        super(CLITask, self).__init__(*args)
+        kwargs.setdefault('_id', args[0])
+        super(CLITask, self).__init__(*args, **kwargs)
 
     def run(self, stdin=None, stdout=None, stderr=None):
         "Start the task, returning status via <task>.deferred callbacks when the task completes. The keyword arguments stdin, stdout, and stderr may be used to override the ones provided at initialization."
@@ -192,6 +198,7 @@ class CLITask(BaseTask):
     def _fail(self, failure):
         err(failure)
 
+    @logfunc
     def _spawn(self, FDs):
         childFDs, closeFDs = FDs
         self.proc = reactor.spawnProcess(CLIProcessProtocol(self), executable=self.args[0], args=self.args, childFDs = childFDs)
@@ -202,7 +209,7 @@ class BaseSetTask(BaseTask):
     "Base class for Tasks that run a set of other Tasks."
     slots = 'subs', 'main'
     def __init__(self, tasks, **kwargs):
-        super(BaseSetTask, self).__init__()
+        super(BaseSetTask, self).__init__(**kwargs)
         self.subs = set()
         if 'main' in kwargs:
             main = kwargs.pop('main')

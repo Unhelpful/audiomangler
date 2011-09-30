@@ -15,7 +15,7 @@ import errno
 from functools import wraps
 from audiomangler.config import Config
 from audiomangler import util
-from audiomangler.audiocodecs import sync_sets, get_codec
+from audiomangler.audiocodecs import sync_sets, get_codec, check_rename_sync
 from audiomangler.scanner import scan
 from audiomangler.task import PoolTask
 from audiomangler.logging import *
@@ -81,7 +81,8 @@ common_opts = (
 
 @parse_options(common_opts)
 def rename(*args):
-    dir_list = scan(args)[1]
+    albums, dir_list = scan(args)[:2]
+    check_rename_sync(albums, dir_list)
     util.test_splits(dir_list)
     onsplit = Config['onsplit']
     for (dir_, files) in dir_list.items():
@@ -153,6 +154,7 @@ def rename(*args):
 def sync(*args):
     (album_list, dir_list) = scan(args)[:2]
     targettids = scan(Config['base'])[2]
+    check_rename_sync(album_list, dir_list, targettids)
     sync_sets(album_list.values(), targettids)
 
 def replaygain_task_generator(album_list):
