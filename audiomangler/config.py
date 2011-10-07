@@ -78,6 +78,7 @@ class AMConfig(RawConfigParser):
 Config = AMConfig(
    (
       ('defaults',
+         ('allowed_id3_encodings', 'iso-8859-1,utf-16,utf-8'),
          ('onsplit', 'error'),
          ('onconflict', 'error'),
          ('groupby',

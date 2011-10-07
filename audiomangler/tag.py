@@ -13,6 +13,7 @@ from mutagen import id3
 import re
 from operator import and_
 from audiomangler.expression import evaluate
+from audiomangler.config import Config
 
 def splitnumber(num, label):
     if isinstance(num, (list, tuple)):
@@ -125,6 +126,7 @@ def id3rva2out(in_dict, out_dict, key, v__):
         peak = 0.0
     out_dict[':'.join(('RVA2', target))] = id3.RVA2(desc=target, peak=peak, gain=gain, channel=1)
 
+allowed_id3_encodings = frozenset(Config['allowed_id3_encodings'].split(','))
 def best_encoding(txt):
     id3_encodings = (
         'iso-8859-1',
@@ -134,6 +136,7 @@ def best_encoding(txt):
     )
     results = []
     for enc in range(4):
+        if id3_encodings[enc] not in allowed_id3_encodings: continue
         try:
             results.append((len(txt.encode(id3_encodings[enc])), enc))
         except UnicodeError:
