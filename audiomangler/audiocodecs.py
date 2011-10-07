@@ -22,7 +22,8 @@ from subprocess import Popen, PIPE
 from mutagen import FileType
 from audiomangler.config import Config
 from audiomangler.tag import NormMetaData
-from audiomangler.task import CLITask, PoolTask, FuncTask, GroupTask, generator_task
+from audiomangler.task import CLITask, PoolTask, FuncTask, GroupTask, generator_task, reactor
+from multiprocessing import cpu_count
 from audiomangler.expression import Expr, Format
 from audiomangler import util
 import errno
@@ -567,6 +568,7 @@ def sync_sets(sets=[], targettids=()):
         task_generator = track_transcode_generator
     elif targetcodec.has_from_wav_multi:
         task_generator = album_transcode_generator
+    reactor.suggestThreadPoolSize(max(len(alb) for alb in sets) * (2 + int(Config.get('jobs', cpu_count()))))
     PoolTask(task_generator(sets, targettids, allowedcodecs, targetcodec)).run()
     return
 
