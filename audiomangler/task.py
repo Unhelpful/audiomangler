@@ -181,10 +181,15 @@ class CLITask(BaseTask):
             childFDs[2] = stderr
         else:
             childFDs[2] = getattr(self, 'stderr', 'r')
-        d = deferToThread(self._setup, childFDs)
-        d.addCallback(self._spawn)
-        d.addErrback(self._fail)
+        for target in childFDs.values():
+            if isinstance(target, basestring) and (target.startswith('w:') or target.startswith('r:')):
+                d = deferToThread(self._setup, childFDs)
+                d.addCallback(self._spawn)
+                d.addErrback(self._fail)
+                return
+        self._spawn((childFDs,[]))
 
+    @logfunc
     def _setup(self, childFDs):
         closeFDs = []
         for key, value in childFDs.items():
