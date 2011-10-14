@@ -194,7 +194,7 @@ class FLACCodec(Codec):
     lossless = True
     to_wav_pipe_cmd = Expr("(decoder, '-s', '-c', '-d', infile)")
     to_wav_pipe_stdout = Expr("outfile")
-    from_wav_pipe_cmd = Expr("(encoder, '-s')+encopts+(infile, )")
+    from_wav_pipe_cmd = Expr("(encoder, '-s')+encopts+(('-o', outfile) if outfile else ())+(infile or '-', )")
     replaygain_cmd = Expr("(replaygain, '--add-replay-gain')+files")
 
 class OggVorbisCodec(Codec):
@@ -348,7 +348,7 @@ def complete_album(fileset, targetcodec, outfiles):
                 newreplaygain = True
                 break
         metas.append(meta)
-    if targetcodec.has_replaygain:
+    if targetcodec.has_replaygain and newreplaygain:
         metas = (yield targetcodec.add_replaygain(outfiles, metas)) or metas
     outfile_objs = []
     fromdir = set()
