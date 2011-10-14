@@ -22,7 +22,7 @@ from subprocess import Popen, PIPE
 from mutagen import FileType
 from audiomangler.config import Config
 from audiomangler.tag import NormMetaData
-from audiomangler.task import CLITask, PoolTask, FuncTask, GroupTask, generator_task, reactor
+from audiomangler.task import CLITask, CLIPipelineTask, PoolTask, FuncTask, GroupTask, generator_task, reactor
 from multiprocessing import cpu_count
 from audiomangler.expression import Expr, Format
 from audiomangler import util
@@ -30,9 +30,13 @@ import errno
 from audiomangler.util import ClassInitMeta
 from mutagen import File
 from collections import deque, namedtuple
+from twisted.internet.defer import DeferredList
+from twisted.python.failure import Failure
 from audiomangler.logging import *
+from functools import wraps, partial
 
 codec_map = {}
+idexpr = Format("$first(releasetype == 'soundtrack' and 'Soundtrack', albumartist, artist, '[Unknown]')::$first(album, '[Unknown]')[$first('%02d.' % discnumber if discnumber > 0 else '', '')$first('%02d' % tracknumber, '')]")
 
 class Codec(object):
     __metaclass__ = ClassInitMeta
@@ -72,7 +76,7 @@ class Codec(object):
         return CLITask(*args, _id="%s.from_wav_multi(%s)" % (cls.__name__, outdir))
 
     @classmethod
-    def from_wav_pipe(cls, infile, outfile):
+    def from_wav_pipe(cls, infile, outfile, meta):
         if not hasattr(cls, 'from_wav_pipe_cmd'):
             return None
         encopts = Config['encopts']
@@ -80,7 +84,8 @@ class Codec(object):
             encopts = ()
         else:
             encopts = tuple(encopts.split())
-        outfile = cls._conv_out_filename(infile)
+        if infile:
+            outfile = cls._conv_out_filename(infile)
         env = {
             'infile': infile,
             'outfile': outfile,
@@ -90,13 +95,13 @@ class Codec(object):
             'encoder': cls.encoder
         }
         args = cls.from_wav_pipe_cmd.evaluate(env)
-        stdin = '/dev/null'
-        if hasattr(cls, '_from_wav_pipe_stdin'):
+        stdin = 'w'
+        if infile and hasattr(cls, '_from_wav_pipe_stdin'):
             stdin = cls._from_wav_pipe_stdin.evaluate(env)
-        return CLITask(*args, stdin=stdin, _id="%s.from_wav_pipe(%s)" % (cls.__name__, outfile))
+        return CLITask(*args, stdin=stdin, _id="%s.from_wav_pipe{%s}" % (cls.__name__, idexpr.evaluate(meta.flat())))
 
     @classmethod
-    def to_wav_pipe(cls, infile, outfile):
+    def to_wav_pipe(cls, infile, outfile, meta):
         if not hasattr(cls, 'to_wav_pipe_cmd'):
             return None
         env = {
@@ -107,10 +112,10 @@ class Codec(object):
            'decoder':cls.decoder
         }
         args = cls.to_wav_pipe_cmd.evaluate(env)
-        stdout = 'w:/dev/null'
-        if hasattr(cls, 'to_wav_pipe_stdout'):
+        stdout = 'r'
+        if outfile and hasattr(cls, 'to_wav_pipe_stdout'):
             stdout = 'w:' + cls.to_wav_pipe_stdout.evaluate(env)
-        return CLITask(*args, stdout=stdout, _id="%s.to_wav_pipe(%s)" % (cls.__name__, infile))
+        return CLITask(*args, stdout=stdout, _id="%s.to_wav_pipe{%s}" % (cls.__name__, idexpr.evaluate(meta.flat())))
 
     @classmethod
     @generator_task
@@ -119,7 +124,7 @@ class Codec(object):
             'replaygain':cls.replaygain,
             'files':tuple(files)
         }
-        if hasattr(cls, 'replaygain_cmd') and (not metas or not hasattr(cls, calc_replaygain)):
+        if hasattr(cls, 'replaygain_cmd') and (not metas or not hasattr(cls, 'calc_replaygain')):
             task = CLITask(*cls.replaygain_cmd.evaluate(env))
             yield task
         elif hasattr(cls, 'calc_replaygain'):
@@ -203,17 +208,14 @@ class OggVorbisCodec(Codec):
     has_replaygain = True
     to_wav_pipe_cmd = Expr("(decoder, '-Q', '-o', '-', infile)")
     to_wav_pipe_stdout = Expr("outfile")
-    from_wav_pipe_cmd = Expr("(encoder, '-Q')+encopts+('-o', outfile, infile)")
+    from_wav_pipe_cmd = Expr("(encoder, '-Q')+encopts+('-o', outfile, infile or '-')")
     replaygain_cmd = Expr("(replaygain, '-q', '-a')+files")
     calc_replaygain_cmd = Expr("(replaygain, '-a', '-n', '-d')+files")
 
-    @classmethod
-    def calc_replaygain(cls, files):
+    @staticmethod
+    def calc_replaygain(out):
+        out, err = out
         tracks = []
-        args = [cls.replaygain, '-and']
-        args.extend(files)
-        p = Popen(args=args, stdout=PIPE, stderr=PIPE)
-        (out, err) = p.communicate()
         apeak = 0.0
         for match in re.finditer('^\s*(\S+ dB)\s*\|\s*([0-9]+)\s*\|', out,
             re.M):
@@ -258,11 +260,13 @@ class PipeManager(object):
                 self.pipes.add(newpath)
             result.append(self.pipes.pop())
         result.sort()
+        msg(consoleformat=u"%(obj)r allocating pipes %(pipes)r", obj=self, pipes=result)
         return result
 
     def free_pipes(self, pipes):
         if isinstance(pipes, basestring):
             pipes = (pipes,)
+        msg(consoleformat=u"%(obj)r freeing pipes %(pipes)r", obj=self, pipes=pipes)
         self.pipes.update(pipes)
 
     def cleanup(self):
@@ -304,16 +308,18 @@ class FileManager(object):
             self.create_dir()
         for idx in xrange(count):
             if not self.files:
-                newpath = os.path.join(self.pipedir,'%s%08x%s' % (prefix, self.count, suffix))
+                newpath = os.path.join(self.filedir,'%s%08x%s' % (prefix, self.count, suffix))
                 self.count += 1
                 self.files.add(newpath)
             result.append(self.files.pop())
         result.sort()
+        msg(consoleformat=u"%(obj)r allocating files %(files)r", obj=self, files=result)
         return result
 
     def free_files(self, files):
         if isinstance(files, basestring):
             files = (files,)
+        msg(consoleformat=u"%(obj)r freeing files %(files)r", obj=self, files=files)
         self.files.update(files)
 
     def cleanup(self):
@@ -324,15 +330,11 @@ file_manager = FileManager(prefix='out')
 
 rg_keys = 'replaygain_track_gain', 'replaygain_track_peak', 'replaygain_album_gain', 'replaygain_album_peak'
 
+def check_output(outfile):
+    assert os.path.exists(outfile), "Expected output file %r is missing" % outfile
+
 @generator_task
-def album_transcode_one(fileset, targetcodec):
-    file_manager.create_dir()
-    pipes = pipe_manager.get_pipes(len(fileset))
-    outfiles = [os.path.join(file_manager.filedir, targetcodec._conv_out_filename(os.path.split(pipe)[1])) for pipe in pipes]
-    tasks = [targetcodec.from_wav_multi(file_manager.filedir, pipes, ())]
-    for file_, pipe in zip(fileset, pipes):
-        tasks.append(get_codec(file_).to_wav_pipe(file_.filename, pipe))
-    yield GroupTask(tasks)
+def complete_album(fileset, targetcodec, outfiles):
     newreplaygain = False
     metas = []
     for file in fileset:
@@ -367,59 +369,40 @@ def album_transcode_one(fileset, targetcodec):
         fromdir = False
         ignorefiles = False
     copy_rename_files(outfile_objs, fromdir, ignorefiles, sourcepaths, 'move')
-    pipe_manager.free_pipes(pipes)
+    for outfile in outfiles:
+        if os.path.exists(outfile):
+            err(consoleformat="Temporary file %(file)r still exists after it should have been renamed.", file=outfile)
+
+@generator_task
+def album_transcode_one(fileset, targetcodec):
+    file_manager.create_dir()
+    pipes = pipe_manager.get_pipes(len(fileset))
+    outfiles = [os.path.join(file_manager.filedir, targetcodec._conv_out_filename(os.path.split(pipe)[1])) for pipe in pipes]
+    tasks = [targetcodec.from_wav_multi(file_manager.filedir, pipes, ())]
+    for file_, pipe in zip(fileset, pipes):
+        tasks.append(get_codec(file_).to_wav_pipe(file_.filename, pipe, file_.meta))
+    yield GroupTask(tasks)
+    complete_task = complete_album(fileset, targetcodec, outfiles)
+    complete_task.deferred.addBoth(lambda dummy: pipe_manager.free_pipes(pipes))
+    yield complete_task
 
 def deque_queue(d):
     while len(d):
         yield d.popleft()
 
-class AlbumManager(object):
-    __slots__ = [ 'tasks', 'albums' ]
-    def __init__(self):
-        self.tasks = {}
-
-    def add_album(self, album):
-        return Album(album, self)
-
-    def add_task(self, task, album):
-        self.tasks[task] = album
-
-    def complete_task(task):
-        album = self.tasks.pop(task)
-        return album.complete_task(task)
-
-class Album(object):
-    __slots__ = [ 'tasks', 'album', 'outfiles', 'manager' ]
-    def __init__(self, album, manager=None):
-        self.tasks = set()
-        self.album = album
-        self.outfiles = []
-        self.manager = manager
-
-    def add_task(self, task):
-        self.tasks.add(task)
-        if self.manager:
-            self.manager.add_task(task, self)
-
-    def add_outfile(self, outfile):
-        self.outfiles.append(outfile)
-
-    def add_job(self, task, outfile):
-        self.add_task(task)
-        self.add_outfile(outfile)
-
-    def complete_task(task):
-        self.tasks.remove(task)
-        if not self.tasks:
-            return self.finalize()
-
 def track_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
     class album_(object):
         __slots__ = [ 'task_count', 'album', 'outfiles' ]
-    albums = {}
-    tasks = {}
     copy_task = None
     copy_queue = deque()
+    completions = deque()
+
+    def wrap(f):
+        @wraps(getattr(f, 'func', f))
+        def proxy(out):
+            f()
+            return out
+        return proxy
     for album in sets:
         if all(t.type_ in allowedcodecs and t.has_replaygain() for t in album):
             copy_queue.append(FuncTask(copy_rename_files, album, op='copy'))
@@ -429,19 +412,26 @@ def track_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
                 copy_task = PoolTask(deque_queue(copy_queue), jobs=1)
                 copy_task.queue()
         else:
-            album_obj = album_()
-            album_ojb.task_count = 0
-            album_obj.album = album
-            album_obj.outfiles = []
+            file_manager.create_dir()
+            tasks = []
+            outfiles = []
+            outfiles_ext = []
             for track in album:
-                outfile, = filemanager.get_files(1)
-                decoder = get_codec(file_).to_wav_pipe(file_.filename, '')
-                encoder = targetcodec.from_wav_pipe('', outfile)
-                album_obj.outfiles.append(outfile)
-                task = CLIPipelineTask([encoder, decoder])
-                tasks[task] = album_obj
-                album_obj.task_count += 1
-                completed = yield 
+                outfile, = file_manager.get_files(1)
+                outfile_ext = targetcodec._conv_out_filename(outfile)
+                decoder = get_codec(track).to_wav_pipe(track.filename, None, track.meta)
+                encoder = targetcodec.from_wav_pipe(None, outfile_ext, track.meta)
+                task = CLIPipelineTask([decoder, encoder])
+                task.deferred.addCallback(wrap(partial(check_output, outfile_ext)))
+                if os.path.exists(outfile_ext):
+                    err(consoleformat="Output file %(file)r already exists!", file=outfile_ext)
+                tasks.append(task)
+                outfiles.append(outfile)
+                outfiles_ext.append(outfile_ext)
+                yield task
+            complete_task = complete_album(album, targetcodec, outfiles_ext)
+            complete_task.deferred.addBoth(wrap(partial(file_manager.free_files,outfiles)))
+            DeferredList([t.deferred for t in tasks], fireOnOneErrback=True).addCallback(wrap(complete_task.run))
 
 def album_transcode_generator(sets, targettids, allowedcodecs, targetcodec):
     copy_task = None
@@ -564,7 +554,7 @@ def sync_sets(sets=[], targettids=()):
         if any(file.meta.evaluate(tidexpr) not in targettids for file in fileset):
             newsets.append(fileset)
     sets = newsets
-    if False and targetcodec.has_from_wav_pipe:
+    if targetcodec.has_from_wav_pipe:
         task_generator = track_transcode_generator
     elif targetcodec.has_from_wav_multi:
         task_generator = album_transcode_generator

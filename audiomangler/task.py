@@ -23,47 +23,32 @@ from decorator import decorator
 
 from twisted.internet import reactor
 
-try:
-    from twisted.internet.processes import deferToProcess as callDeferred
-except ImportError:
-    from twisted.internet.threads import deferToThread as callDeferred
+defer.Deferred.debug = 1
 
 @decorator
 def background_task(func, self, *args, **kwargs):
     self._register()
-    msg(consoleformat="%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
+    msg(consoleformat=u"%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
     reactor.callWhenRunning(func, self, *args, **kwargs)
     if not reactor.running:
+        msg(consoleformat=u"Starting %(task)r", task=self)
         reactor.run()
+        sys.exit()
+
 
 @decorator
 def queue_task(func, self, *args, **kwargs):
     self._register()
-    msg(consoleformat="%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
+    msg(consoleformat=u"%(obj)r.%(fun)s queue", obj=self, fun=func.func_name)
     reactor.callWhenRunning(func, self, *args, **kwargs)
 
 @decorator
 def logfunc(func, self, *args, **kwargs):
-    msg(consoleformat="%(obj)r.%(fun)s start", obj=self, fun=func.func_name)
+    msg(consoleformat=u"%(obj)r.%(fun)s start", obj=self, fun=func.func_name)
     try:
         return func(self, *args, **kwargs)
     finally:
-        msg(consoleformat="%(obj)r.%(fun)s finish", obj=self, fun=func.func_name)
-
-#def background_task(func):
-    #argspec = inspect.getargspec(func)
-    #env = {}
-    #code = """
-#def decorate(func):
-    #def proxy%s:
-        #self._register()
-        #reactor.callWhenRunning(%s)
-        #if not reactor.running:
-            #reactor.run()
-    #return proxy""" % (inspect.formatargspec(*argspec), ', '.join(['func', 'self'] + ['%s=%s' % (arg, arg) for arg in argspec.args[1:]]))
-    #exec code in globals(), env
-    #return wraps(func)(env['decorate'](func))
-
+        msg(consoleformat=u"%(obj)r.%(fun)s finish", obj=self, fun=func.func_name)
 
 def chain(f):
     @wraps(f)
@@ -78,6 +63,7 @@ def chainDeferreds(d1, d2):
 class BaseTask(object):
     "Base class for other Task types, providing handling for Task registration and cleanup, and ensuring that the first task is started inside the reactor."
     __metaclass__ = ClassInitMeta
+    __cleanup_running = False
     @classmethod
     def __classinit__(cls, name, bases, cls_dict):
         _run = getattr(cls, 'run', None)
@@ -97,19 +83,32 @@ class BaseTask(object):
     __bg_tasks = set()
     def __init__(self, *args, **kwargs):
         self.args = args
-        self.__id = kwargs.get('_id', '@%x' % id(self))
+        _id = kwargs.get('_id')
+        if _id:
+            self.__id = "%s@%x" % (_id, id(self))
+        else:
+            self.__id = "@%x" % id(self)
+        msg(consoleformat=u"new Task %(obj)r: %(obj)s", obj=self)
         self.deferred = defer.Deferred()
         self.deferred.addBoth(self._complete)
 
-    def __repr__(self):
-        return "%s(%s)" % (self.__class__.__name__, self.__id)
+    def __unicode__(self):
+        return u"%s(%s)" % (self.__class__.__name__, self.__id)
 
     def _register(self):
+        assert not BaseTask.__cleanup_running, "Discontinuing processing because cleanup has started."
         self.__class__.__bg_tasks.add(self)
 
+    @logfunc
     def _complete(self, out):
+        assert not BaseTask.__cleanup_running, "Discontinuing processing because cleanup has started."
+        msg(consoleformat="%(task)r._complete(%(result)r)", task=self, result=out)
         if isinstance(out, failure.Failure):
-            err(out)
+            self._fail(out)
+            self.deferred.pause()
+            BaseTask._all_cleanup()
+            reactor.callFromThread(reactor.stop)
+            return out
         if self.deferred.callbacks:
             self.deferred.addBoth(self._complete)
             return out
@@ -120,9 +119,29 @@ class BaseTask(object):
         finally:
             if self in self.__bg_tasks:
                 self.__bg_tasks.remove(self)
-            if not self.__bg_tasks:
+            if not self.__bg_tasks and reactor.running:
                 reactor.stop()
         return out
+
+    @classmethod
+    @logfunc
+    def _all_cleanup(cls):
+        cls.__cleanup_running = True
+        for task in cls.__bg_tasks:
+            msg(consoleformat="cleaning %(task)r", task=task)
+            try:
+                task.deferred.pause()
+                task._cleanup()
+            except:
+                err(failure.Failure())
+        err(failure.Failure())
+
+    def _fail(self, error):
+        err(consoleformat=u"Task %(task)r failed.", task=self)
+        err(error)
+
+    def _cleanup(self):
+        pass
 
 class FuncTask(BaseTask):
     "Task that calls a Python function with the specified arguments when run."
@@ -133,7 +152,7 @@ class FuncTask(BaseTask):
         super(FuncTask, self).__init__(*args) 
 
     def run(self):
-        self.func_deferred = callDeferred(self.func, *self.args, **self.kwargs)
+        self.func_deferred = deferToThread(self.func, *self.args, **self.kwargs)
         self.func_deferred.chainDeferred(self.deferred)
 
 class CLIProcessProtocol(protocol.ProcessProtocol):
@@ -141,19 +160,24 @@ class CLIProcessProtocol(protocol.ProcessProtocol):
     def __init__(self, task):
         self._out = []
         self._err = []
+        self._all = []
         self.task = task
 
     def outReceived(self, data):
         self._out.append(data)
+        self._all.append(data)
 
     def errReceived(self, data):
         self._err.append(data)
+        self._all.append(data)
 
     def processEnded(self, reason):
         (self.task.out, self.task.err) = map(''.join, (self._out, self._err))
+        msg(consoleformat="process exited with reason %(reason)r, output %(output)r", reason=reason, output=(self.task.out, self.task.err))
         if reason.check(error.ProcessDone) and not (reason.value.status or reason.value.signal):
             self.task.deferred.callback((self.task.out, self.task.err))
         else:
+            reason._taskoutput = ''.join(self._all)
             self.task.deferred.errback(reason)
 
 class CLITask(BaseTask):
@@ -163,7 +187,10 @@ class CLITask(BaseTask):
         for arg in 'stdin', 'stdout', 'stderr':
             if arg in kwargs:
                 setattr(self, arg, kwargs[arg])
-        kwargs.setdefault('_id', args[0])
+        _id = kwargs.get('_id', '')
+        _id += repr(tuple(args))
+        kwargs['_id'] = _id
+        self.proc = None
         super(CLITask, self).__init__(*args, **kwargs)
 
     def run(self, stdin=None, stdout=None, stderr=None):
@@ -185,11 +212,11 @@ class CLITask(BaseTask):
             if isinstance(target, basestring) and (target.startswith('w:') or target.startswith('r:')):
                 d = deferToThread(self._setup, childFDs)
                 d.addCallback(self._spawn)
-                d.addErrback(self._fail)
+                d.addErrback(self._complete)
                 return
         self._spawn((childFDs,[]))
 
-    @logfunc
+#    @logfunc
     def _setup(self, childFDs):
         closeFDs = []
         for key, value in childFDs.items():
@@ -200,15 +227,26 @@ class CLITask(BaseTask):
                 childFDs[key] = closeFDs[-1]
         return (childFDs, closeFDs)
 
-    def _fail(self, failure):
-        err(failure)
-
     @logfunc
     def _spawn(self, FDs):
+      try:
         childFDs, closeFDs = FDs
         self.proc = reactor.spawnProcess(CLIProcessProtocol(self), executable=self.args[0], args=self.args, childFDs = childFDs)
         for fd in closeFDs:
             os.close(fd)
+      except:
+        err(failure.Failure())
+
+    def _cleanup(self):
+        if (self.proc):
+            try:
+                self.proc.signalProcess('KILL')
+            except error.ProcessExitedAlready:
+                pass
+
+    def _fail(self, error):
+        err(consoleformat=u"Task %(task)r failed with output %(output)r", task=self, output=error._taskoutput)
+        err(error)
 
 class BaseSetTask(BaseTask):
     "Base class for Tasks that run a set of other Tasks."
@@ -224,7 +262,9 @@ class BaseSetTask(BaseTask):
             self.main = main
         self.args = tasks
 
+    @logfunc
     def run_sub(self, sub, *args, **kwargs):
+        msg(consoleformat="start %(sub)r for %(obj)r", sub=sub, obj=self)
         self.subs.add(sub)
         sub.parent = self
         sub.run(*args, **kwargs)
@@ -288,6 +328,7 @@ class GeneratorTask(BaseSetTask):
         assert(isinstance(gen, GeneratorType))
         super(GeneratorTask, self).__init__(gen)
 
+    @logfunc
     def run(self):
         assert(isinstance(self.args, GeneratorType))
         try:
@@ -296,7 +337,7 @@ class GeneratorTask(BaseSetTask):
         except StopIteration:
             self.deferred.callback(None)
         except:
-            err(failure.Failure())
+            self.deferred.errback(failure.Failure())
 
     def complete_sub(self, out, sub):
         super(GeneratorTask, self).complete_sub(out, sub)
@@ -309,7 +350,7 @@ class GeneratorTask(BaseSetTask):
         except StopIteration:
             self.deferred.callback(None)
         except:
-            err(failure.Failure())
+            self.deferred.errback(failure.Failure())
 
 class GroupTask(BaseSetTask):
     "Task that starts a group of tasks and waits for them to complete before firing its callback."
@@ -342,6 +383,7 @@ class PoolTask(BaseSetTask):
         if not self.subs:
             self.deferred.callback(None)
 
+    @logfunc
     def complete_sub(self, out, sub):
         out = super(PoolTask, self).complete_sub(out, sub)
         args = self.args

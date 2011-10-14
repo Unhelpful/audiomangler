@@ -16,7 +16,6 @@ class FilteredFileLogObserver(log.FileLogObserver):
     def __init__(self, f, loglevel=VERBOSE):
         self.output = f
         self.loglevel = get_level(loglevel, VERBOSE)
-        print loglevels[self.loglevel]
 
     def emit(self, eventDict):
         if 'nologerror' in eventDict: return
@@ -34,7 +33,13 @@ class FilteredFileLogObserver(log.FileLogObserver):
         else:
             text = log.textFromEventDict(eventDict)
         timeStr = self.formatTime(eventDict['time'])
-        self.output.write(timeStr + ' [' + loglevels[eventDict['loglevel']].ljust(7) + '] ' + text + '\n')
+        if isinstance(self.output, basestring):
+            try:
+                self.output = open(self.output, 'wb')
+            except:
+                pass
+        self.output.write(timeStr + ' [' + loglevels[eventDict.get('loglevel', ERROR)].ljust(7) + '] ' + text + '\n')
+        self.output.flush()
 
 class FilteredConsoleLogObserver(log.FileLogObserver):
     timeFormat = '[%H:%M:%S] '
@@ -82,46 +87,34 @@ def get_level(level, default=ERROR):
             return levels[0]
     return default
 
-def init_logconsole():
-    global logconsole
+def init_logs():
+    global collector, logconsole, logfile
     if logconsole is None:
-        try:
-            logconsole = FilteredConsoleLogObserver(Config['consolelevel'])
-            logconsole.start()
-        except: pass
+        logconsole = FilteredConsoleLogObserver(Config['consolelevel'])
+        logconsole.start()
+
+    if collector is None:
+        collector = FilteredFileLogObserver(StringIO(), ERROR)
+        collector.start()
+
+    if logfile is None:
+        logfile = FilteredFileLogObserver(Config.get('logfile', 'audiomangler-%d.log' % os.getpid()), get_level(Config['loglevel']))
+        logfile.start()
 
 def err(*msg, **kwargs):
-    global collector, logfile
-    if 'nologerror' not in kwargs:
-        if collector is None:
-            try:
-                collector = FilteredFileLogObserver(StringIO(), ERROR)
-                collector.start()
-            except: pass
-        if logfile is None:
-            try:
-                logfile = FilteredFileLogObserver(open(Config.get('logfile', 'audiomangler-%d.log' % os.getpid()), 'wb'), get_level(Config['loglevel']))
-                logfile.start()
-            except: pass
+    init_logs()
     kwargs['loglevel'] = ERROR
-    init_logconsole()
     if msg and isinstance(msg[0], (failure.Failure, Exception)):
         log.err(_noignore=1, *msg, **kwargs)
     else:
         log.msg(_noignore=1, *msg, **kwargs)
 
 def msg(*msg, **kwargs):
-    global logfile
-    init_logconsole()
+    init_logs()
     kwargs.setdefault('loglevel', DEBUG)
     if kwargs['loglevel'] == ERROR:
-        err(_noignore=1, *msg, **kwargs)
+        err(*msg, **kwargs)
     else:
-        if Config['logfile'] and logfile is None and kwargs['loglevel'] <= get_level(Config['loglevel']):
-            try:
-                logfile = FilteredFileLogObserver(open(Config['logfile'], 'wb'), Config['loglevel'])
-                logfile.start()
-            except: pass
         log.msg(_noignore=1, *msg, **kwargs)
 
 def fatal(*msg, **kwargs):
