@@ -187,7 +187,7 @@ def replaygain_task_generator(album_list):
             continue
         msg(consoleformat=u"Adding replaygain values to %(albumtitle)s",
             format="rg: %(tracks)r",
-            albumtitle=album[0].meta.flat().get('album', '[unknown]'), tracks=tuple(t.filename for t in album))
+            albumtitle=album[0].meta.flat().get('album', '[unknown]'), tracks=tuple(t.filename for t in album), loglevel=INFO)
         yield codec.add_replaygain([t.filename for t in album])
 
 @parse_options(common_opts[:2] + (

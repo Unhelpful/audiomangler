@@ -63,7 +63,7 @@ def chainDeferreds(d1, d2):
 class BaseTask(object):
     "Base class for other Task types, providing handling for Task registration and cleanup, and ensuring that the first task is started inside the reactor."
     __metaclass__ = ClassInitMeta
-    __cleanup_running = False
+    _cleanup_running = False
     @classmethod
     def __classinit__(cls, name, bases, cls_dict):
         _run = getattr(cls, 'run', None)
@@ -96,19 +96,22 @@ class BaseTask(object):
         return u"%s(%s)" % (self.__class__.__name__, self.__id)
 
     def _register(self):
-        assert not BaseTask.__cleanup_running, "Discontinuing processing because cleanup has started."
+        assert not BaseTask._cleanup_running, "Discontinuing processing because cleanup has started."
         self.__class__.__bg_tasks.add(self)
 
     @logfunc
     def _complete(self, out):
-        assert not BaseTask.__cleanup_running, "Discontinuing processing because cleanup has started."
+        assert not BaseTask._cleanup_running, "Discontinuing processing because cleanup has started."
         msg(consoleformat="%(task)r._complete(%(result)r)", task=self, result=out)
         if isinstance(out, failure.Failure):
+          try:
             self._fail(out)
             self.deferred.pause()
             BaseTask._all_cleanup()
             reactor.callFromThread(reactor.stop)
             return out
+          except:
+            err(failure.Failure())
         if self.deferred.callbacks:
             self.deferred.addBoth(self._complete)
             return out
@@ -126,7 +129,7 @@ class BaseTask(object):
     @classmethod
     @logfunc
     def _all_cleanup(cls):
-        cls.__cleanup_running = True
+        cls._cleanup_running = True
         for task in cls.__bg_tasks:
             msg(consoleformat="cleaning %(task)r", task=task)
             try:
@@ -134,7 +137,6 @@ class BaseTask(object):
                 task._cleanup()
             except:
                 err(failure.Failure())
-        err(failure.Failure())
 
     def _fail(self, error):
         err(consoleformat=u"Task %(task)r failed.", task=self)
@@ -229,13 +231,11 @@ class CLITask(BaseTask):
 
     @logfunc
     def _spawn(self, FDs):
-      try:
+        if BaseTask._cleanup_running: return
         childFDs, closeFDs = FDs
         self.proc = reactor.spawnProcess(CLIProcessProtocol(self), executable=self.args[0], args=self.args, childFDs = childFDs)
         for fd in closeFDs:
             os.close(fd)
-      except:
-        err(failure.Failure())
 
     def _cleanup(self):
         if (self.proc):
