@@ -96,8 +96,8 @@ class Codec(object):
         }
         args = cls.from_wav_pipe_cmd.evaluate(env)
         stdin = 'w'
-        if infile and hasattr(cls, '_from_wav_pipe_stdin'):
-            stdin = cls._from_wav_pipe_stdin.evaluate(env)
+        if infile and hasattr(cls, 'from_wav_pipe_stdin'):
+            stdin = cls.from_wav_pipe_stdin.evaluate(env)
         return CLITask(*args, stdin=stdin, _id="%s.from_wav_pipe{%s}" % (cls.__name__, idexpr.evaluate(meta.flat())))
 
     @classmethod
