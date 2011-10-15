@@ -147,9 +147,13 @@ class MP3Codec(Codec):
     ext = 'mp3'
     type_ = 'mp3'
     encoder = 'lame'
+    decoder = 'lame'
     replaygain = 'mp3gain'
+    has_to_wav_pipe = True
     has_from_wav_multi = True
     has_replaygain = True
+    to_wav_pipe_cmd = Expr("(decoder, '--quiet', '--decode', infile, outfile or '-')")
+    to_wav_pipe_stdout = Expr("outfile")
     from_wav_multi_cmd = Expr("(encoder, '--quiet') + encopts + ('--noreplaygain', '--nogapout', outdir, '--nogaptags', '--nogap') + infiles")
     calc_replaygain_cmd = Expr("(replaygain, '-q', '-o', '-s', 's')+files")
 
@@ -243,6 +247,8 @@ class PipeManager(object):
     def create_dir(self):
         if self.pipedir is None:
             self.pipedir = os.path.abspath(Config['workdir'] or Config['base'])
+            if not os.path.exists(self.pipedir):
+                os.makedirs(self.pipedir)
             self.pipedir = mkdtemp(prefix='audiomangler_work_', dir=self.pipedir)
             atexit.register(self.cleanup)
 
@@ -297,6 +303,8 @@ class FileManager(object):
             elif not workdir:
                 workdir = basedir
             self.filedir = workdir
+            if not os.path.exists(self.filedir):
+                os.makedirs(self.filedir)
             self.filedir = mkdtemp(prefix='audiomangler_work_', dir=self.filedir)
             atexit.register(self.cleanup)
 
