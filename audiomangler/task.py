@@ -380,6 +380,8 @@ class PoolTask(BaseSetTask):
                 self.run_sub(next_task)
         except StopIteration:
             pass
+        except:
+            self.deferred.errback(failure.Failure())
         if not self.subs:
             self.deferred.callback(None)
 
@@ -395,6 +397,8 @@ class PoolTask(BaseSetTask):
                 next = args.next()
         except StopIteration:
             next = None
+        except:
+            self.deferred.errback(failure.Failure())
         if isinstance(next, BaseTask):
             self.run_sub(next)
         if not self.subs:
