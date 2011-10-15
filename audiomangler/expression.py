@@ -13,9 +13,9 @@ from RestrictedPython.RCompile import RExpression
 from RestrictedPython.MutatingWalker import walk
 from RestrictedPython.Guards import safe_builtins as eval_builtins
 from string import maketrans
-from compiler import ast
+from compiler import ast, parse
 
-_breakre = re.compile("\(|\)|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?|(?P<raw>[rR])?(?P<quote>'|\")|\\\\.")
+_subexpr = re.compile("\$\$|\$\$|\$(?P<nosan>/)?(?P<label>[a-z]+)?(?P<paren>\()?")
 
 pathseptrans = dict(enumerate(unicode(maketrans('/', '_')[:48])))
 pathtrans = dict(enumerate(unicode(maketrans(r'/\[]?=+<>;",*|', os.path.sep + '_' * 13)[:125])))
@@ -175,57 +175,38 @@ class Format(Expr):
         result = []
         cur = []
         prevend = 0
-        for m in _breakre.finditer(self._source):
-    #        import pdb; pdb.set_trace()
+        while 1:
+            m = _subexpr.search(self._source, prevend)
+            if not m:
+                cur.append(self._source[prevend:])
+                break
             mt = m.group(0)
             mg = m.groupdict()
             if m.start() > prevend:
                 cur.append(self._source[prevend:m.start()])
             prevend = m.end()
-            if not state:
-                if mt == '$$':
-                    cur.append('$')
-                elif mt.startswith('$'):
-                    if not (mg['label'] or mg['paren']):
-                        cur.append(mt)
-                        continue
-                    if any(cur):
-                        result.append(''.join(cur))
-                        cur = []
-                    if not mg['paren']:
-                        if mg['nosan'] or not self._sanitize:
-                            result.append(StringExpr(mg['label'], self._filename, self._baseexpr))
-                        else:
-                            result.append(SanitizedExpr(mg['label'], self._filename, self._baseexpr))
-                    else:
-                        if mg['nosan'] or not self._sanitize:
-                            cur.append(StringExpr)
-                        else:
-                            cur.append(SanitizedExpr)
-                        if mg['label']:
-                            cur.append(mg['label'])
-                        cur.append('(')
-                        state.append('(')
-                else:
-                    cur.append(mt)
+            if mt == '$$':
+                cur.append('$')
             else:
-                cur.append(mt)
-                if state[-1] == '(':
-                    if mt == ')':
-                        state.pop()
-                    elif mg['quote']:
-                        state.append(mg['quote'])
-                    elif mt.endswith('('):
-                        state.append('(')
+                if any(cur):
+                    result.append(''.join(cur))
+                cur = []
+                expr_class = StringExpr if mg['nosan'] or not self._sanitize else SanitizedExpr
+                if not mg['paren']:
+                    result.append(expr_class(mg['label'], self._filename, self._baseexpr))
                 else:
-                    if mg['quote'] == state[-1]:
-                        state.pop()
-                if not state:
-                    result.append(cur[0](''.join(cur[1:]), self._filename, self._baseexpr))
-                    cur = []
-        cur.append(self._source[prevend:])
-        if state:
-            raise SyntaxError('unexpected EOF while parsing', (self._filename, 1, len(self._source), self._source))
+                    expr_text = self._source[prevend:]
+                    try:
+                        parse(expr_text, 'eval')
+                    except SyntaxError, e:
+                        prevend += e.offset
+                        expr_text = expr_text[:e.offset-1]
+                        if mg['label']:
+                            expr_text = "%s(%s)" % (mg['label'], expr_text)
+                        result.append(expr_class(expr_text, self._filename, self._baseexpr))
+                    else:
+                        start = m.start()
+                        raise SyntaxError('Unexpected EOF while parsing', (None, 1, len(self._source) - start, self._source[start:]))
         if any(cur):
             result.append(''.join(cur))
         return result
